@@ -161,7 +161,7 @@ def load_pikpak_accounts():
 PIKPAK_ACCOUNTS = load_pikpak_accounts()
 PIKPAK_TOKENS_FILE = f"/tmp/pikpak_tokens_{SERVER_ID}.json"
 PIKPAK_LOCK = threading.Lock()
-
+MAGNET_ADD_LOCK = threading.Lock()
 # ============================================================
 # PIKPAK TOKEN STORAGE
 # ============================================================
@@ -1483,7 +1483,9 @@ def emergency_status():
 def add_magnet():
     """Add magnet to PikPak and return download link"""
     global EMERGENCY_STOP
-    
+    # Add random delay to prevent simultaneous requests
+    import random
+    time.sleep(random.uniform(1, 3))
     magnet = request.json.get('magnet')
     user_quality = request.json.get('quality', 'auto')
     
