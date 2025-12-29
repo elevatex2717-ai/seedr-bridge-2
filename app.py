@@ -20,10 +20,10 @@ app = Flask(__name__)
 # ============================================================
 # SERVER IDENTIFICATION (NEW)
 # ============================================================
-SERVER_ID = "primary"
-SERVER_MODE = os.environ.get("SERVER_MODE", "primary")
-SESSION_NAME = "bot_session_primary"
-SERVER_URL = "https://seedr-bridge.onrender.com"
+SERVER_ID = "secondary"
+SERVER_MODE = os.environ.get("SERVER_MODE", "secondary")
+SESSION_NAME = "bot_session_secondary"
+SERVER_URL = "https://seedr-bridge-2.onrender.com"
 
 # ============================================================
 # CONFIGURATION
@@ -137,7 +137,7 @@ def load_pikpak_accounts():
     accounts = []
     
     # SERVER 1: Only load accounts 1, 2, 3 (for 1080p)
-    for i in [1, 2, 3]:
+    for i in [4, 5, 6]:
         email = os.environ.get(f"PIKPAK_{i}_EMAIL")
         if email:
             accounts.append({
@@ -1202,7 +1202,7 @@ def admin_api_status():
             "id": SERVER_ID,
             "mode": SERVER_MODE,
             "url": SERVER_URL,
-            "handles": "1080p only"
+            "handles": "720p, 480p"
         },
         "system": {
             "status": "online",
@@ -1329,7 +1329,7 @@ def home():
             "id": SERVER_ID,
             "mode": SERVER_MODE,
             "url": SERVER_URL,
-            "handles": "1080p, 2160p, 4K (large files)"
+            "handles": "720p, 480p (medium/small files)"
         },
         "service": "PikPak-Telegram Bridge",
         "queue": JOB_QUEUE.qsize(),
@@ -1836,7 +1836,7 @@ if __name__ == '__main__':
     print("=" * 60, flush=True)
     print(f"🚀 PikPak-Telegram Bridge - SERVER: {SERVER_ID.upper()}", flush=True)
     print(f"📍 URL: {SERVER_URL}", flush=True)
-    print(f"🎬 Handles: 1080p, 2160p, 4K (large files)", flush=True)
+    print(f"🎬 Handles: 720p, 480p (medium/small files)", flush=True)
     print(f"📦 Loaded {len(PIKPAK_ACCOUNTS)} PikPak accounts: {[a['id'] for a in PIKPAK_ACCOUNTS]}", flush=True)
     print(f"🔑 Session: {SESSION_NAME}", flush=True)
     print("=" * 60, flush=True)
