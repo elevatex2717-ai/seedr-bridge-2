@@ -497,9 +497,46 @@ def pikpak_add_magnet(magnet_link, account, tokens):
     response = requests.post(url, headers=headers, json=body, timeout=30)
     data = response.json()
     
+    # Debug: Print full response
+    print(f"PIKPAK [{SERVER_ID}]: API Response keys: {data.keys()}", flush=True)
+    
+    # Check multiple possible response formats
     if "task" in data:
-        print(f"PIKPAK [{SERVER_ID}]: ✅ Magnet added: {data['task'].get('file_name', 'Unknown')}", flush=True)
-        return data["task"]
+        task = data["task"]
+        file_id = task.get("file_id") or task.get("id") or ""
+        file_name = task.get("file_name") or task.get("name") or "Unknown"
+        print(f"PIKPAK [{SERVER_ID}]: ✅ Magnet added: {file_name} (file_id: {file_id})", flush=True)
+        
+        # Ensure file_id is in the response
+        task["file_id"] = file_id
+        task["file_name"] = file_name
+        return task
+    
+    elif "file" in data:
+        # Alternative response format
+        file_data = data["file"]
+        file_id = file_data.get("id") or file_data.get("file_id") or ""
+        file_name = file_data.get("name") or file_data.get("file_name") or "Unknown"
+        print(f"PIKPAK [{SERVER_ID}]: ✅ Magnet added (file format): {file_name} (file_id: {file_id})", flush=True)
+        
+        return {
+            "file_id": file_id,
+            "file_name": file_name,
+            **file_data
+        }
+    
+    elif "id" in data:
+        # Direct response format
+        file_id = data.get("id") or ""
+        file_name = data.get("name") or "Unknown"
+        print(f"PIKPAK [{SERVER_ID}]: ✅ Magnet added (direct format): {file_name} (file_id: {file_id})", flush=True)
+        
+        return {
+            "file_id": file_id,
+            "file_name": file_name,
+            **data
+        }
+    
     else:
         print(f"PIKPAK [{SERVER_ID}]: ❌ Add magnet failed: {data}", flush=True)
         raise Exception(f"Add magnet failed: {data.get('error', 'Unknown')}")
