@@ -806,30 +806,121 @@ def pikpak_delete_file(file_id, account, tokens):
     
     # Step 2: Try to empty trash (non-blocking)
     try:
-        captcha_sign2, timestamp2 = generate_captcha_sign(device_id)
-        captcha_token2 = get_pikpak_captcha(
-            action="PATCH:/drive/v1/files/trash:empty",
-            device_id=device_id,
-            user_id=user_id,
-            captcha_sign=captcha_sign2,
-            timestamp=timestamp2
-        )
-        
-        empty_url = f"{PIKPAK_API_DRIVE}/drive/v1/files/trash:empty"
-        headers2 = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}",
-            "x-device-id": device_id,
-            "x-captcha-token": captcha_token2
-        }
-        
-        empty_response = requests.patch(empty_url, headers=headers2, json={}, timeout=30)
-        print(f"PIKPAK [{SERVER_ID}]: ✅ Trash emptied successfully", flush=True)
-        
+        pikpak_empty_trash(account, tokens)
     except Exception as e:
         print(f"PIKPAK [{SERVER_ID}]: ⚠️ Trash not emptied (continuing anyway): {e}", flush=True)
     
     return True
+
+def pikpak_get_storage(account, tokens):
+    """Get storage usage for a PikPak account"""
+    print(f"PIKPAK [{SERVER_ID}]: Getting storage for account {account['id']}", flush=True)
+
+    device_id = account["device_id"]
+    user_id = tokens["user_id"]
+    access_token = tokens["access_token"]
+
+    captcha_sign, timestamp = generate_captcha_sign(device_id)
+    captcha_token = get_pikpak_captcha(
+        action="GET:/drive/v1/about",
+        device_id=device_id,
+        user_id=user_id,
+        captcha_sign=captcha_sign,
+        timestamp=timestamp
+    )
+
+    url = f"{PIKPAK_API_DRIVE}/drive/v1/about"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "x-device-id": device_id,
+        "x-captcha-token": captcha_token
+    }
+
+    response = requests.get(url, headers=headers, timeout=30)
+    data = response.json()
+
+    if "quota" in data:
+        used = int(data["quota"].get("usage", 0))
+        total = int(data["quota"].get("limit", 1))
+        if total == 0: total = 1
+        
+        used_gb = round(used / (1024**3), 2)
+        total_gb = round(total / (1024**3), 2)
+        percent = round((used / total) * 100) if total > 0 else 0
+        
+        return {"used_gb": used_gb, "total_gb": total_gb, "percent": percent}
+    else:
+        raise Exception(f"Failed to get storage: {data.get('error', 'Unknown error')}")
+
+def pikpak_empty_trash(account, tokens):
+    """Empty the trash for a PikPak account"""
+    print(f"PIKPAK [{SERVER_ID}]: Emptying trash for account {account['id']}", flush=True)
+
+    device_id = account["device_id"]
+    user_id = tokens["user_id"]
+    access_token = tokens["access_token"]
+
+    captcha_sign, timestamp = generate_captcha_sign(device_id)
+    captcha_token = get_pikpak_captcha(
+        action="PATCH:/drive/v1/files/trash:empty",
+        device_id=device_id,
+        user_id=user_id,
+        captcha_sign=captcha_sign,
+        timestamp=timestamp
+    )
+
+    url = f"{PIKPAK_API_DRIVE}/drive/v1/files/trash:empty"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "x-device-id": device_id,
+        "x-captcha-token": captcha_token
+    }
+
+    response = requests.patch(url, headers=headers, json={}, timeout=30)
+    
+    if response.status_code == 200 or response.status_code == 204:
+        print(f"PIKPAK [{SERVER_ID}]: ✅ Trash emptied for account {account['id']}", flush=True)
+        return True
+    else:
+        print(f"PIKPAK [{SERVER_ID}]: ❌ Trash empty failed: {response.status_code} {response.text}", flush=True)
+        raise Exception(f"Failed to empty trash: {response.text}")
+
+def pikpak_batch_trash(file_ids, account, tokens):
+    """Move multiple files to trash"""
+    if not file_ids:
+        return True
+    print(f"PIKPAK [{SERVER_ID}]: Batch trashing {len(file_ids)} files for account {account['id']}", flush=True)
+
+    device_id = account["device_id"]
+    user_id = tokens["user_id"]
+    access_token = tokens["access_token"]
+
+    captcha_sign, timestamp = generate_captcha_sign(device_id)
+    captcha_token = get_pikpak_captcha(
+        action="POST:/drive/v1/files:batchTrash",
+        device_id=device_id,
+        user_id=user_id,
+        captcha_sign=captcha_sign,
+        timestamp=timestamp
+    )
+
+    url = f"{PIKPAK_API_DRIVE}/drive/v1/files:batchTrash"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "x-device-id": device_id,
+        "x-captcha-token": captcha_token
+    }
+    body = {"ids": file_ids}
+
+    response = requests.post(url, headers=headers, json=body, timeout=60)
+    
+    if response.status_code == 200:
+        print(f"PIKPAK [{SERVER_ID}]: ✅ {len(file_ids)} files moved to trash", flush=True)
+        return True
+    else:
+        raise Exception(f"Failed to batch trash files: {response.text}")
+
 # ============================================================
 # SMART STREAMER
 # ============================================================
@@ -1278,12 +1369,24 @@ def admin_api_status():
         remaining = 5 - downloads_today
         total_remaining += remaining
         
+        storage_info = {
+            "storage_used_gb": 0,
+            "storage_total_gb": 0,
+            "storage_percent": 0
+        }
+        try:
+            tokens = ensure_logged_in(account)
+            storage_info = pikpak_get_storage(account, tokens)
+        except Exception as e:
+            print(f"PIKPAK [{SERVER_ID}]: Could not get storage for account {account['id']}: {e}", flush=True)
+
         accounts_list.append({
             "id": account["id"],
             "email": account["email"],
             "downloads_today": downloads_today,
             "downloads_remaining": remaining,
-            "available": remaining > 0
+            "available": remaining > 0,
+            **storage_info
         })
     
     sessions_list = []
@@ -1368,6 +1471,143 @@ def admin_reset_quota(account_id):
         return jsonify({"success": True, "message": f"Account {account_id} quota reset"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/api/storage/<int:account_id>', methods=['GET'])
+def admin_api_get_storage(account_id):
+    """Get storage usage for specific account"""
+    try:
+        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        if not account:
+            return jsonify({"success": False, "error": "Account not found"}), 404
+        
+        tokens = ensure_logged_in(account)
+        storage_info = pikpak_get_storage(account, tokens)
+        
+        return jsonify(storage_info)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/api/clear-trash/<int:account_id>', methods=['POST'])
+def admin_api_clear_trash(account_id):
+    """Empty trash for specific account"""
+    try:
+        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        if not account:
+            return jsonify({"success": False, "error": "Account not found"}), 404
+        
+        print(f"PIKPAK [{SERVER_ID}]: Clearing trash for account {account_id}", flush=True)
+        tokens = ensure_logged_in(account)
+        pikpak_empty_trash(account, tokens)
+        
+        log_activity("info", f"Cleared trash for account {account_id}")
+        return jsonify({"success": True, "message": "Trash cleared"})
+    except Exception as e:
+        log_activity("error", f"Failed to clear trash for account {account_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/api/clear-mypack/<int:account_id>', methods=['POST'])
+def admin_api_clear_mypack(account_id):
+    """Delete all files in My Pack for a specific account"""
+    try:
+        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        if not account:
+            return jsonify({"success": False, "error": "Account not found"}), 404
+            
+        print(f"PIKPAK [{SERVER_ID}]: Clearing My Pack for account {account_id}", flush=True)
+        tokens = ensure_logged_in(account)
+        
+        # 1. List all files in root
+        files_in_root = pikpak_list_files(parent_id='root', account=account, tokens=tokens)
+        file_ids = [f['id'] for f in files_in_root if 'id' in f]
+        
+        if not file_ids:
+            return jsonify({"success": True, "message": "My Pack is already empty", "files_deleted": 0})
+        
+        # 2. Batch delete them
+        pikpak_batch_trash(file_ids, account, tokens)
+        
+        # 3. Empty trash
+        pikpak_empty_trash(account, tokens)
+        
+        log_activity("info", f"Cleared My Pack for account {account_id} ({len(file_ids)} files)")
+        return jsonify({"success": True, "message": "My Pack cleared", "files_deleted": len(file_ids)})
+
+    except Exception as e:
+        log_activity("error", f"Failed to clear My Pack for account {account_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/admin/api/clear-all-trash', methods=['POST'])
+def admin_api_clear_all_trash():
+    """Empty trash for all accounts on this server"""
+    cleared_count = 0
+    errors = []
+    
+    print(f"PIKPAK [{SERVER_ID}]: Clearing trash for ALL accounts", flush=True)
+    
+    for account in PIKPAK_ACCOUNTS:
+        try:
+            tokens = ensure_logged_in(account)
+            pikpak_empty_trash(account, tokens)
+            cleared_count += 1
+        except Exception as e:
+            error_msg = f"Account {account['id']} failed: {e}"
+            print(error_msg, flush=True)
+            errors.append(error_msg)
+    
+    log_activity("info", f"Cleared trash for {cleared_count}/{len(PIKPAK_ACCOUNTS)} accounts")
+    if errors:
+        return jsonify({
+            "success": False, 
+            "accounts_cleared": cleared_count,
+            "message": f"Completed with {len(errors)} errors.",
+            "errors": errors
+        }), 500
+
+    return jsonify({"success": True, "accounts_cleared": cleared_count})
+
+@app.route('/admin/api/clear-all-mypack', methods=['POST'])
+def admin_api_clear_all_mypack():
+    """Clear My Pack for all accounts on this server"""
+    cleared_count = 0
+    total_files_deleted = 0
+    errors = []
+
+    print(f"PIKPAK [{SERVER_ID}]: Clearing My Pack for ALL accounts", flush=True)
+
+    for account in PIKPAK_ACCOUNTS:
+        try:
+            tokens = ensure_logged_in(account)
+            
+            # List files
+            files_in_root = pikpak_list_files(parent_id='root', account=account, tokens=tokens)
+            file_ids = [f['id'] for f in files_in_root if 'id' in f]
+            
+            if not file_ids:
+                cleared_count += 1
+                continue
+
+            # Batch delete and empty trash
+            pikpak_batch_trash(file_ids, account, tokens)
+            pikpak_empty_trash(account, tokens)
+            
+            total_files_deleted += len(file_ids)
+            cleared_count += 1
+
+        except Exception as e:
+            error_msg = f"Account {account['id']} failed: {e}"
+            print(error_msg, flush=True)
+            errors.append(error_msg)
+            
+    log_activity("info", f"Cleared My Pack for {cleared_count}/{len(PIKPAK_ACCOUNTS)} accounts")
+    if errors:
+        return jsonify({
+            "success": False, 
+            "accounts_cleared": cleared_count,
+            "message": f"Completed with {len(errors)} errors.",
+            "errors": errors
+        }), 500
+        
+    return jsonify({"success": True, "accounts_cleared": cleared_count, "total_files_deleted": total_files_deleted})
 
 @app.route('/admin/api/test-magnet', methods=['POST'])
 def admin_test_magnet():

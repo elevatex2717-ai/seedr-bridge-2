@@ -15,11 +15,14 @@
                 <span class="version" id="version">v2.0.0</span>
             </div>
             <div class="header-right">
+                <button onclick="clearAllTrash()" class="btn btn-warning">🗑️ Clear All Trash</button>
+                <button onclick="clearAllMyPack()" class="btn btn-danger">📁 Clear All My Pack</button>
                 <button class="btn btn-secondary" onclick="refreshData()">🔄 Refresh</button>
                 <button class="btn btn-danger" id="emergencyBtn" onclick="toggleEmergency()">
                     🔴 EMERGENCY STOP
                 </button>
-            </div>        </header>
+            </div>
+        </header>
 
         <!-- System Status Cards -->
         <section class="section">
@@ -67,9 +70,10 @@
                         <tr>
                             <th>#</th>
                             <th>Email</th>
-                            <th>Usage</th>
+                            <th>Daily Usage</th>
+                            <th>Storage</th>
                             <th>Status</th>
-                            <th>Action</th>
+                            <th style="width: 20%;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="accountsTable">
@@ -158,6 +162,7 @@
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             refreshData();
+            setInterval(refreshData, 30000); // Auto-refresh every 30 seconds
         });
 
         // Refresh all data
@@ -210,9 +215,21 @@
                             </div>
                             <span>${acc.downloads_today}/5</span>
                         </td>
+                        <td>
+                            <div class="usage-bar-item" style="margin: 0;">
+                                <div class="usage-bar" style="height: 12px; background-color: #444;">
+                                    <div class="usage-bar-fill" style="width: ${acc.storage_percent || 0}%"></div>
+                                </div>
+                                <span class="usage-value" style="font-size: 11px;">
+                                    ${acc.storage_used_gb || 0}GB / ${acc.storage_total_gb || 0}GB (${acc.storage_percent || 0}%)
+                                </span>
+                            </div>
+                        </td>
                         <td class="${statusClass}">${statusText}</td>
                         <td>
-                            <button class="btn btn-small btn-secondary" onclick="resetQuota(${acc.id})">Reset</button>
+                            <button class="btn btn-sm btn-secondary" onclick="resetQuota(${acc.id})">Reset Quota</button>
+                            <button onclick="clearTrash(${acc.id})" class="btn btn-sm btn-warning">🗑️ Clear Trash</button>
+                            <button onclick="clearMyPack(${acc.id})" class="btn btn-sm btn-danger">📁 Clear My Pack</button>
                         </td>
                     `;
                     accountsTable.appendChild(row);
@@ -371,6 +388,60 @@
                 resultDiv.innerHTML = '<p class="test-error">❌ Failed to test magnet</p>';
             }
         }
+
+        // Storage management functions
+        function clearTrash(accountId) {
+            fetch('/admin/api/clear-trash/' + accountId, {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message || 'Trash cleared!');
+                    location.reload();
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('An error occurred while clearing trash.');
+                });
+        }
+
+        function clearMyPack(accountId) {
+            fetch('/admin/api/clear-mypack/' + accountId, {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message || 'My Pack cleared!');
+                    location.reload();
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('An error occurred while clearing My Pack.');
+                });
+        }
+
+        function clearAllTrash() {
+            fetch('/admin/api/clear-all-trash', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    alert('Cleared trash for ' + data.accounts_cleared + ' accounts');
+                    location.reload();
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('An error occurred while clearing all trash.');
+                });
+        }
+
+        function clearAllMyPack() {
+            fetch('/admin/api/clear-all-mypack', {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    alert('Cleared My Pack for ' + data.accounts_cleared + ' accounts');
+                    location.reload();
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('An error occurred while clearing all My Packs.');
+                });
+        }
+
     </script>
 </body>
 </html>
