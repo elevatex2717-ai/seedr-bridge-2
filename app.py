@@ -938,6 +938,56 @@ def pikpak_batch_trash(file_ids, account, tokens):
     else:
         raise Exception(f"Failed to batch trash files: {response.text}")
 
+def extract_hash(magnet_link):
+    """Extract BTIH hash from magnet link and normalize it."""
+    match = re.search(r'xt=urn:btih:([a-zA-Z0-9]+)', magnet_link, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None
+
+def check_duplicate_by_hash(magnet_link, account, tokens):
+    """Check for duplicate file by BTIH hash."""
+    input_hash = extract_hash(magnet_link)
+    if not input_hash:
+        print(f"PIKPAK [{SERVER_ID}]: No hash found in magnet link. Skipping check.", flush=True)
+        return None
+
+    print(f"PIKPAK [{SERVER_ID}]: Checking for duplicate hash: {input_hash}", flush=True)
+
+    try:
+        # List ALL files in the root directory
+        files = pikpak_list_files(parent_id=None, account=account, tokens=tokens)
+        
+        for file in files:
+            file_id = file.get('id')
+            file_name = file.get('name', 'N/A')
+            
+            # Get detailed file info
+            try:
+                # We need fresh tokens for each call inside the loop potentially
+                fresh_tokens = ensure_logged_in(account)
+                file_info = pikpak_get_file_info(file_id, account, fresh_tokens)
+                
+                # The hash is often in params.url for magnet links
+                params_url = file_info.get('params', {}).get('url', '')
+                
+                is_match = input_hash in params_url.upper()
+                print(f"PIKPAK [{SERVER_ID}]: Checking file '{file_name}': Hash match? {is_match}", flush=True)
+
+                if is_match:
+                    print(f"PIKPAK [{SERVER_ID}]: ✅ Hash match FOUND for file: {file_name} ({file_id})", flush=True)
+                    return file 
+
+            except Exception as e:
+                print(f"PIKPAK [{SERVER_ID}]: Could not get info for file {file_name} ({file_id}): {e}", flush=True)
+                continue
+
+    except Exception as e:
+        print(f"PIKPAK [{SERVER_ID}]: Error during hash duplicate check: {e}", flush=True)
+
+    print(f"PIKPAK [{SERVER_ID}]: No duplicate found for hash: {input_hash}", flush=True)
+    return None
+
 # ============================================================
 # SMART STREAMER
 # ============================================================
@@ -1880,50 +1930,39 @@ def add_magnet():
             with MAGNET_ADD_LOCK:
                 print(f"PIKPAK [{SERVER_ID}]: === ADD MAGNET ATTEMPT {attempt}/{max_total_retries} ===", flush=True)
 
-                # 1. Get magnet name
-                magnet_name = get_magnet_name(magnet)
-                print(f"PIKPAK [{SERVER_ID}]: Checking for existing file: {magnet_name}", flush=True)
-
-                # 2. Select account (same logic as before)
+                # 1. Select account
                 account = select_available_account(exclude_accounts=exhausted_accounts)
                 last_account_id = account["id"]
                 tokens = ensure_logged_in(account)
 
-                # 3. Check for existing file
-                if magnet_name:
+                # 2. Check for duplicate by hash (NEW)
+                existing_file = check_duplicate_by_hash(magnet, account, tokens)
+                if existing_file:
+                    print(f"PIKPAK [{SERVER_ID}]: ✅ Found existing file by hash: {existing_file.get('name')}", flush=True)
+                    
                     try:
-                        # List root files
-                        files = pikpak_list_files(None, account, tokens) # None means root
+                        download_url = pikpak_get_download_link(existing_file['id'], account, tokens)
+                        file_size = int(existing_file.get('size', 0))
                         
-                        for file in files:
-                            # Exact match check
-                            if file['name'] == magnet_name:
-                                print(f"PIKPAK [{SERVER_ID}]: ✅ Found existing file: {magnet_name}", flush=True)
-                                
-                                # Get download link
-                                download_url = pikpak_get_download_link(file['id'], account, tokens)
-                                file_size = int(file.get('size', 0))
-                                
-                                # Detect quality
-                                detected_quality = detect_quality(user_quality, magnet, file_size)
-                                
-                                return jsonify({
-                                    "result": True,
-                                    "folder_id": file['id'], # Use file_id as folder_id
-                                    "file_id": file['id'],
-                                    "file_name": file['name'],
-                                    "file_size": file_size,
-                                    "url": download_url,
-                                    "account_used": account["id"],
-                                    "file_type": "file",
-                                    "quality_detected": detected_quality,
-                                    "server": SERVER_ID,
-                                    "quota_saved": True
-                                })
+                        detected_quality = detect_quality(user_quality, magnet, file_size)
+                        
+                        return jsonify({
+                            "result": True,
+                            "folder_id": existing_file['id'],
+                            "file_id": existing_file['id'],
+                            "file_name": existing_file['name'],
+                            "file_size": file_size,
+                            "url": download_url,
+                            "account_used": account["id"],
+                            "file_type": "file",
+                            "quality_detected": detected_quality,
+                            "server": SERVER_ID,
+                            "quota_saved": True
+                        })
                     except Exception as e:
-                        print(f"PIKPAK [{SERVER_ID}]: Check existing failed (continuing): {e}", flush=True)
+                        print(f"PIKPAK [{SERVER_ID}]: Could not process existing file found by hash (will re-download): {e}", flush=True)
 
-                # 4. Proceed with normal download if not found...
+                # 3. Proceed with normal download if not found...
                 task = pikpak_add_magnet(magnet, account, tokens)
                 folder_id = task.get("file_id")
                 file_name = task.get("file_name", "Unknown")
