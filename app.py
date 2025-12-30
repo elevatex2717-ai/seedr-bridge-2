@@ -1181,10 +1181,10 @@ async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=
                     
                     msg = await tg_app.send_document(
                         chat_id=final_chat_id,
-                        video=stream,
+                        document=stream,
                         caption=caption,
                         file_name=filename,
-                        supports_streaming=True,
+                        force_document=True,
                         progress=progress_callback
                     )
                     
