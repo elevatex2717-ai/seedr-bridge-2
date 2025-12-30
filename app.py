@@ -160,6 +160,8 @@ def load_pikpak_accounts():
 
 PIKPAK_ACCOUNTS = load_pikpak_accounts()
 PIKPAK_TOKENS_FILE = f"/tmp/pikpak_tokens_{SERVER_ID}.json"
+PIKPAK_STORAGE_CACHE = {}
+PIKPAK_STORAGE_CACHE_TIME = {}
 PIKPAK_LOCK = threading.Lock()
 MAGNET_ADD_LOCK = threading.Lock()
 # ============================================================
@@ -167,57 +169,17 @@ MAGNET_ADD_LOCK = threading.Lock()
 # ============================================================
 
 def check_all_accounts_quota():
-    """Check quota for all accounts on startup (doesn't consume quota)"""
-    print(f"PIKPAK [{SERVER_ID}]: Checking account quotas on startup...", flush=True)
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    tokens = load_pikpak_tokens()
-    
-    if "daily_usage" not in tokens:
-        tokens["daily_usage"] = {}
+    """Check quota for all accounts on startup and cache it."""
+    print(f"PIKPAK [{SERVER_ID}]: Checking and caching account quotas on startup...", flush=True)
     
     for account in PIKPAK_ACCOUNTS:
-        try:
-            # Login to get current status
-            account_tokens = ensure_logged_in(account)
-            
-            # Get account info (doesn't consume quota)
-            device_id = account["device_id"]
-            user_id = account_tokens["user_id"]
-            access_token = account_tokens["access_token"]
-            
-            # Check VIP/quota status
-            captcha_sign, timestamp = generate_captcha_sign(device_id)
-            captcha_token = get_pikpak_captcha(
-                action="GET:/drive/v1/about",
-                device_id=device_id,
-                user_id=user_id,
-                captcha_sign=captcha_sign,
-                timestamp=timestamp
-            )
-            
-            url = f"{PIKPAK_API_DRIVE}/drive/v1/about"
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "x-device-id": device_id,
-                "x-captcha-token": captcha_token
-            }
-            
-            response = requests.get(url, headers=headers, timeout=30)
-            data = response.json()
-            
-            # Log account status
-            quota_used = data.get("quota", {}).get("usage", 0)
-            quota_limit = data.get("quota", {}).get("limit", 0)
-            
-            print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Storage: {quota_used}/{quota_limit}", flush=True)
-            print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Login successful ✅", flush=True)
-            
-        except Exception as e:
-            print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Check failed: {e}", flush=True)
-    
-    save_pikpak_tokens(tokens)
-    print(f"PIKPAK [{SERVER_ID}]: Startup quota check complete", flush=True)
+        storage_info = get_account_storage(account['id'])
+        if 'error' in storage_info and storage_info.get('error'):
+            print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Check failed on startup: {storage_info['error']}", flush=True)
+        else:
+            print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Startup check OK. Storage: {storage_info.get('used_gb', 0)}GB / {storage_info.get('total_gb', 0)}GB", flush=True)
+
+    print(f"PIKPAK [{SERVER_ID}]: Startup quota check and cache complete", flush=True)
 # ============================================================
 # PIKPAK TOKEN STORAGE
 # ============================================================
@@ -812,6 +774,58 @@ def pikpak_delete_file(file_id, account, tokens):
     
     return True
 
+def get_account_storage(account_id):
+    """Get storage for an account, with caching."""
+    cache_key = f"storage_{account_id}"
+    current_time = time.time()
+    
+    SUCCESS_CACHE_DURATION = 86400  # 24 hours
+    FAILURE_CACHE_DURATION = 3600   # 1 hour
+
+    with PIKPAK_LOCK:
+        if cache_key in PIKPAK_STORAGE_CACHE:
+            cached_data = PIKPAK_STORAGE_CACHE[cache_key]
+            cache_time = PIKPAK_STORAGE_CACHE_TIME.get(cache_key, 0)
+            
+            is_failure = 'error' in cached_data and cached_data.get('error')
+            duration = FAILURE_CACHE_DURATION if is_failure else SUCCESS_CACHE_DURATION
+            
+            if current_time - cache_time < duration:
+                if is_failure:
+                    print(f"PIKPAK [{SERVER_ID}]: Returning cached failure for account {account_id}", flush=True)
+                return cached_data
+
+    try:
+        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        if not account:
+            raise Exception("Account not found")
+
+        tokens = ensure_logged_in(account)
+        storage_info = pikpak_get_storage(account, tokens)
+        
+        with PIKPAK_LOCK:
+            PIKPAK_STORAGE_CACHE[cache_key] = storage_info
+            PIKPAK_STORAGE_CACHE_TIME[cache_key] = current_time
+            
+        return storage_info
+
+    except Exception as e:
+        error_message = str(e)
+        print(f"PIKPAK [{SERVER_ID}]: Caching failed storage status for account {account_id}: {error_message}", flush=True)
+        
+        failure_data = {
+            "used_gb": 0, 
+            "total_gb": 0, 
+            "percent": 0, 
+            "error": error_message
+        }
+        
+        with PIKPAK_LOCK:
+            PIKPAK_STORAGE_CACHE[cache_key] = failure_data
+            PIKPAK_STORAGE_CACHE_TIME[cache_key] = current_time
+            
+        return failure_data
+
 def pikpak_get_storage(account, tokens):
     """Get storage usage for a PikPak account"""
     print(f"PIKPAK [{SERVER_ID}]: Getting storage for account {account['id']}", flush=True)
@@ -1369,16 +1383,8 @@ def admin_api_status():
         remaining = 5 - downloads_today
         total_remaining += remaining
         
-        storage_info = {
-            "storage_used_gb": 0,
-            "storage_total_gb": 0,
-            "storage_percent": 0
-        }
-        try:
-            tokens = ensure_logged_in(account)
-            storage_info = pikpak_get_storage(account, tokens)
-        except Exception as e:
-            print(f"PIKPAK [{SERVER_ID}]: Could not get storage for account {account['id']}: {e}", flush=True)
+        storage_info = get_account_storage(account['id'])
+        api_storage_info = {k: v for k, v in storage_info.items() if k != 'error'}
 
         accounts_list.append({
             "id": account["id"],
@@ -1386,7 +1392,7 @@ def admin_api_status():
             "downloads_today": downloads_today,
             "downloads_remaining": remaining,
             "available": remaining > 0,
-            **storage_info
+            **api_storage_info
         })
     
     sessions_list = []
@@ -1475,17 +1481,12 @@ def admin_reset_quota(account_id):
 @app.route('/admin/api/storage/<int:account_id>', methods=['GET'])
 def admin_api_get_storage(account_id):
     """Get storage usage for specific account"""
-    try:
-        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
-        if not account:
-            return jsonify({"success": False, "error": "Account not found"}), 404
-        
-        tokens = ensure_logged_in(account)
-        storage_info = pikpak_get_storage(account, tokens)
-        
-        return jsonify(storage_info)
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    storage_info = get_account_storage(account_id)
+    
+    if 'error' in storage_info and storage_info.get('error'):
+        return jsonify({"success": False, "error": storage_info['error']}), 500
+    
+    return jsonify(storage_info)
 
 @app.route('/admin/api/clear-trash/<int:account_id>', methods=['POST'])
 def admin_api_clear_trash(account_id):
