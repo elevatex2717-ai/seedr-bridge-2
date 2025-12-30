@@ -976,7 +976,7 @@ class SmartStream(IOBase):
         self.response = self.session.get(
             url,
             stream=True,
-            timeout=(10, 900),
+            timeout=(10, 1200),
             headers=HEADERS_STREAM
         )
         self.response.raise_for_status()
@@ -1940,7 +1940,7 @@ def add_magnet():
                         "server": SERVER_ID
                     }), 400
                 
-                pikpak_poll_download(folder_id, account, tokens, timeout=600)
+                pikpak_poll_download(folder_id, account, tokens, timeout=900)
                 
                 tokens = ensure_logged_in(account)
                 
