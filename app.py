@@ -382,7 +382,19 @@ def ensure_logged_in(account):
 
 def get_best_account():
     """Select PikPak account with capacity"""
-    return db.get_best_account(DB_SERVER_ID)
+    account = db.get_best_account(DB_SERVER_ID, exclude_ids=exhausted_accounts)
+    
+    if not account:
+        raise Exception("No available accounts found")
+        
+    # MAP FIELDS HERE
+    return {
+        "id": account['id'],
+        "email": account['email'],
+        "password": account['password'],
+        "device_id": account['current_device_id'],  # MAP THIS!
+        "my_pack_id": account.get('my_pack_id')
+    }
 
 
 
