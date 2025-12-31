@@ -15,6 +15,7 @@ from pyrogram import Client, enums
 from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from urllib.parse import unquote
+from supabase_client import db
 
 app = Flask(__name__)
 
@@ -1429,37 +1430,12 @@ def admin_dashboard():
 def admin_api_status():
     """Get complete admin dashboard data"""
     
-    tokens_data = load_pikpak_tokens()
-    usage = tokens_data.get("daily_usage", {})
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    accounts_list = []
+    accounts_list = db.get_all_server_accounts(2) # Using server_id 2 for "secondary"
     total_remaining = 0
-    
-    for account in PIKPAK_ACCOUNTS:
-        account_key = f"account_{account['id']}"
-        account_usage = usage.get(account_key, {})
-        
-        if account_usage.get("date") != today:
-            downloads_today = 0
-        else:
-            downloads_today = account_usage.get("count", 0)
-        
-        remaining = 5 - downloads_today
-        total_remaining += remaining
-        
-        storage_info = get_account_storage(account['id'])
-        api_storage_info = {k: v for k, v in storage_info.items() if k != 'error'}
+    if accounts_list:
+        for account in accounts_list:
+            total_remaining += (5 - account.get('quota_used', 5))
 
-        accounts_list.append({
-            "id": account["id"],
-            "email": account["email"],
-            "downloads_today": downloads_today,
-            "downloads_remaining": remaining,
-            "available": remaining > 0,
-            **api_storage_info
-        })
-    
     sessions_list = []
     current_time = time.time()
     with SESSION_LOCK:
@@ -1524,22 +1500,12 @@ def admin_api_status():
 def admin_reset_quota(account_id):
     """Reset quota for specific account"""
     try:
-        tokens = load_pikpak_tokens()
-        
-        if "daily_usage" not in tokens:
-            tokens["daily_usage"] = {}
-        
-        account_key = f"account_{account_id}"
-        tokens["daily_usage"][account_key] = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "count": 0
-        }
-        
-        save_pikpak_tokens(tokens)
-        
-        log_activity("info", f"Account {account_id} quota reset manually")
-        
-        return jsonify({"success": True, "message": f"Account {account_id} quota reset"})
+        success = db.reset_account_quota(account_id)
+        if success:
+            log_activity("info", f"Account {account_id} quota reset manually")
+            return jsonify({"success": True, "message": f"Account {account_id} quota reset"})
+        else:
+            return jsonify({"success": False, "error": "Failed to reset quota in database"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
