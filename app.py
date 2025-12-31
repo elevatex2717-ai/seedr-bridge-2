@@ -132,28 +132,24 @@ PIKPAK_SALTS = [
 ]
 
 # ============================================================
-# PIKPAK ACCOUNT LOADING (MODIFIED - Only accounts 1, 2, 3)
+# PIKPAK TOKEN STORAGE
 # ============================================================
 
-def load_pikpak_accounts():
-    """Load PikPak accounts 1, 2, 3 for Server 1 (Primary)"""
-    return []
-
-PIKPAK_ACCOUNTS = load_pikpak_accounts()
 PIKPAK_TOKENS_FILE = f"/tmp/pikpak_tokens_{SERVER_ID}.json"
 PIKPAK_STORAGE_CACHE = {}
 PIKPAK_STORAGE_CACHE_TIME = {}
 PIKPAK_LOCK = threading.Lock()
 MAGNET_ADD_LOCK = threading.Lock()
 # ============================================================
-# STARTUP QUOTA CHECK (Add after load_pikpak_accounts)
+# STARTUP QUOTA CHECK
 # ============================================================
 
 def check_all_accounts_quota():
     """Check quota for all accounts on startup and cache it."""
     print(f"PIKPAK [{SERVER_ID}]: Checking and caching account quotas on startup...", flush=True)
     
-    for account in PIKPAK_ACCOUNTS:
+    accounts = db.get_all_server_accounts(DB_SERVER_ID)
+    for account in accounts:
         storage_info = get_account_storage(account['id'])
         if 'error' in storage_info and storage_info.get('error'):
             print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Check failed on startup: {storage_info['error']}", flush=True)
@@ -1344,11 +1340,22 @@ def admin_dashboard():
 def admin_api_status():
     """Get complete admin dashboard data"""
     
-    accounts_list = db.get_all_server_accounts(2) # Using server_id 2 for "secondary"
+    accounts_list = db.get_all_server_accounts(DB_SERVER_ID)
     total_remaining = 0
     if accounts_list:
         for account in accounts_list:
-            total_remaining += (5 - account.get('quota_used', 5))
+            # Map DB fields for frontend
+            account['downloads_today'] = account.get('quota_used', 0)
+            remaining = 5 - account['downloads_today']
+            account['available'] = remaining > 0
+            total_remaining += max(0, remaining)
+            
+            # Add storage info from cache if available
+            storage_cache = PIKPAK_STORAGE_CACHE.get(f"storage_{account['id']}")
+            if storage_cache:
+                account['storage_used_gb'] = storage_cache.get('used_gb', 0)
+                account['storage_total_gb'] = storage_cache.get('total_gb', 0)
+                account['storage_percent'] = storage_cache.get('percent', 0)
 
     sessions_list = []
     current_time = time.time()
@@ -1642,8 +1649,8 @@ def home():
         "queue": JOB_QUEUE.qsize(),
         "jobs": len(JOBS),
         "sessions": len(MESSAGE_SESSIONS),
-        "pikpak_accounts": len(PIKPAK_ACCOUNTS),
-        "pikpak_account_ids": [acc["id"] for acc in PIKPAK_ACCOUNTS],
+        "pikpak_accounts": len(db.get_all_server_accounts(DB_SERVER_ID)),
+        "pikpak_account_ids": [acc["id"] for acc in db.get_all_server_accounts(DB_SERVER_ID)],
         "worker_alive": WORKER_THREAD.is_alive() if WORKER_THREAD else False
     })
 
@@ -2019,7 +2026,7 @@ def get_link():
         if not file_id:
             return jsonify({"error": "Missing file_id"}), 400
         
-        account = select_available_account()
+        account = get_best_account()
         tokens = ensure_logged_in(account)
         
         download_url = pikpak_get_download_link(file_id, account, tokens)
@@ -2038,7 +2045,7 @@ def delete_folder():
         if not folder_id or folder_id == 'null' or folder_id == 'None':
             return jsonify({"error": "Invalid folder_id"}), 400
         
-        account = select_available_account()
+        account = get_best_account()
         tokens = ensure_logged_in(account)
         
         pikpak_delete_file(folder_id, account, tokens)
@@ -2167,7 +2174,8 @@ if __name__ == '__main__':
     print(f"🚀 PikPak-Telegram Bridge - SERVER: {SERVER_ID.upper()}", flush=True)
     print(f"📍 URL: {SERVER_URL}", flush=True)
     print(f"🎬 Handles: 720p, 480p (medium/small files)", flush=True)
-    print(f"📦 Loaded {len(PIKPAK_ACCOUNTS)} PikPak accounts: {[a['id'] for a in PIKPAK_ACCOUNTS]}", flush=True)
+    db_accounts = db.get_all_server_accounts(DB_SERVER_ID)
+    print(f"📦 Loaded {len(db_accounts)} PikPak accounts from DB: {[a['id'] for a in db_accounts]}", flush=True)
     print(f"🔑 Session: {SESSION_NAME}", flush=True)
     print("=" * 60, flush=True)
     check_all_accounts_quota() 
