@@ -150,6 +150,9 @@ def check_all_accounts_quota():
     
     accounts = db.get_all_server_accounts(DB_SERVER_ID)
     for account in accounts:
+        # Map device_id for helpers
+        if "current_device_id" in account:
+            account["device_id"] = account["current_device_id"]
         storage_info = get_account_storage(account['id'])
         if 'error' in storage_info and storage_info.get('error'):
             print(f"PIKPAK [{SERVER_ID}]: Account {account['id']} - Check failed on startup: {storage_info['error']}", flush=True)
@@ -714,6 +717,10 @@ def get_account_storage(account_id):
         account = next((acc for acc in accounts if acc['id'] == account_id), None)
         if not account:
             raise Exception("Account not found")
+
+        # Map device_id for helpers
+        if "current_device_id" in account:
+            account["device_id"] = account["current_device_id"]
 
         tokens = ensure_logged_in(account)
         storage_info = pikpak_get_storage(account, tokens)
@@ -1344,6 +1351,9 @@ def admin_api_status():
     total_remaining = 0
     if accounts_list:
         for account in accounts_list:
+            # Map device_id for helpers/frontend
+            if "current_device_id" in account:
+                account["device_id"] = account["current_device_id"]
             # Map DB fields for frontend
             account['downloads_today'] = account.get('quota_used', 0)
             remaining = 5 - account['downloads_today']
@@ -1449,6 +1459,10 @@ def admin_api_clear_trash(account_id):
         if not account:
             return jsonify({"success": False, "error": "Account not found"}), 404
         
+        # Map device_id for helpers
+        if "current_device_id" in account:
+            account["device_id"] = account["current_device_id"]
+
         print(f"PIKPAK [{SERVER_ID}]: Clearing trash for account {account_id}", flush=True)
         tokens = ensure_logged_in(account)
         pikpak_empty_trash(account, tokens)
@@ -1468,6 +1482,10 @@ def admin_api_clear_mypack(account_id):
         if not account:
             return jsonify({"success": False, "error": "Account not found"}), 404
             
+        # Map device_id for helpers
+        if "current_device_id" in account:
+            account["device_id"] = account["current_device_id"]
+
         print(f"PIKPAK [{SERVER_ID}]: Clearing My Pack for account {account_id}", flush=True)
         tokens = ensure_logged_in(account)
         
@@ -1502,6 +1520,9 @@ def admin_api_clear_all_trash():
     accounts = db.get_all_server_accounts(DB_SERVER_ID)
     for account in accounts:
         try:
+            # Map device_id for helpers
+            if "current_device_id" in account:
+                account["device_id"] = account["current_device_id"]
             tokens = ensure_logged_in(account)
             pikpak_empty_trash(account, tokens)
             cleared_count += 1
@@ -1533,6 +1554,9 @@ def admin_api_clear_all_mypack():
     accounts = db.get_all_server_accounts(DB_SERVER_ID)
     for account in accounts:
         try:
+            # Map device_id for helpers
+            if "current_device_id" in account:
+                account["device_id"] = account["current_device_id"]
             tokens = ensure_logged_in(account)
             
             # List files
@@ -2065,6 +2089,9 @@ def pikpak_status():
         total_remaining = 0
         
         for account in accounts:
+            # Map device_id for consistency
+            if "current_device_id" in account:
+                account["device_id"] = account["current_device_id"]
             remaining = 5 - account.get('quota_used', 5)
             total_remaining += remaining
             
