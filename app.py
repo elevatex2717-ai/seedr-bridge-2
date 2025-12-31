@@ -26,6 +26,7 @@ SERVER_ID = "secondary"
 SERVER_MODE = os.environ.get("SERVER_MODE", "secondary")
 SESSION_NAME = "bot_session_secondary"
 SERVER_URL = "https://seedr-bridge-2.onrender.com"
+DB_SERVER_ID = 1 if SERVER_ID == "primary" else 2
 
 # ============================================================
 # CONFIGURATION
@@ -136,29 +137,7 @@ PIKPAK_SALTS = [
 
 def load_pikpak_accounts():
     """Load PikPak accounts 1, 2, 3 for Server 1 (Primary)"""
-    accounts = []
-    
-    # SERVER 1: Only load accounts 1, 2, 3 (for 1080p)
-    for i in [4, 5, 6]:
-        email = os.environ.get(f"PIKPAK_{i}_EMAIL")
-        if email:
-            accounts.append({
-                "id": i,
-                "email": email,
-                "password": os.environ.get(f"PIKPAK_{i}_PASSWORD", ""),
-                "device_id": os.environ.get(f"PIKPAK_{i}_DEVICE_ID", ""),
-                "my_pack_id": os.environ.get(f"PIKPAK_{i}_MY_PACK_ID", ""),
-                "access_token": None,
-                "refresh_token": None,
-                "user_id": None,
-                "token_expires_at": 0,
-                "downloads_today": 0,
-                "last_download_date": None
-            })
-            print(f"PIKPAK [{SERVER_ID}]: Loaded account {i}: {email}", flush=True)
-    
-    print(f"PIKPAK [{SERVER_ID}]: Total accounts loaded: {len(accounts)}", flush=True)
-    return accounts
+    return []
 
 PIKPAK_ACCOUNTS = load_pikpak_accounts()
 PIKPAK_TOKENS_FILE = f"/tmp/pikpak_tokens_{SERVER_ID}.json"
@@ -402,77 +381,11 @@ def ensure_logged_in(account):
     
     return tokens
 
-def select_available_account(exclude_accounts=None):
+def get_best_account():
     """Select PikPak account with capacity"""
-    if exclude_accounts is None:
-        exclude_accounts = []
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    try:
-        tokens_data = load_pikpak_tokens()
-        usage = tokens_data.get("daily_usage", {})
-    except:
-        usage = {}
-    
-    print(f"PIKPAK [{SERVER_ID}]: Checking accounts. Today: {today}", flush=True)
-    print(f"PIKPAK [{SERVER_ID}]: Excluding accounts: {exclude_accounts}", flush=True)
-    print(f"PIKPAK [{SERVER_ID}]: Total accounts loaded: {len(PIKPAK_ACCOUNTS)}", flush=True)
-    
-    if len(PIKPAK_ACCOUNTS) == 0:
-        raise Exception(f"No PikPak accounts configured for {SERVER_ID}! Check environment variables.")
-    
-    for account in PIKPAK_ACCOUNTS:
-        if account["id"] in exclude_accounts:
-            print(f"PIKPAK [{SERVER_ID}]: Account {account['id']}: SKIPPED (exhausted)", flush=True)
-            continue
-        
-        account_key = f"account_{account['id']}"
-        account_usage = usage.get(account_key, {})
-        
-        if account_usage.get("date") != today:
-            downloads_today = 0
-        else:
-            downloads_today = account_usage.get("count", 0)
-        
-        print(f"PIKPAK [{SERVER_ID}]: Account {account['id']}: {downloads_today}/5 downloads today", flush=True)
-        
-        if downloads_today < 5:
-            print(f"PIKPAK [{SERVER_ID}]: ✅ Selected account {account['id']}", flush=True)
-            return account
-    
-    raise Exception(f"All PikPak accounts exhausted for today on {SERVER_ID}")
+    return db.get_best_account(DB_SERVER_ID)
 
-def mark_account_exhausted(account_id):
-    """Mark account as exhausted for today"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    tokens = load_pikpak_tokens()
-    
-    if "daily_usage" not in tokens:
-        tokens["daily_usage"] = {}
-    
-    account_key = f"account_{account_id}"
-    tokens["daily_usage"][account_key] = {"date": today, "count": 5}
-    save_pikpak_tokens(tokens)
-    
-    print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {account_id} marked as exhausted", flush=True)
 
-def increment_account_usage(account_id):
-    """Increment daily download counter for account"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    tokens = load_pikpak_tokens()
-    
-    if "daily_usage" not in tokens:
-        tokens["daily_usage"] = {}
-    
-    account_key = f"account_{account_id}"
-    if tokens["daily_usage"].get(account_key, {}).get("date") != today:
-        tokens["daily_usage"][account_key] = {"date": today, "count": 0}
-    
-    tokens["daily_usage"][account_key]["count"] += 1
-    save_pikpak_tokens(tokens)
-    
-    print(f"PIKPAK [{SERVER_ID}]: Account {account_id} usage: {tokens['daily_usage'][account_key]['count']}/5", flush=True)
 
 # ============================================================
 # PIKPAK DRIVE OPERATIONS
@@ -801,7 +714,8 @@ def get_account_storage(account_id):
                 return cached_data
 
     try:
-        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        accounts = db.get_all_server_accounts(DB_SERVER_ID)
+        account = next((acc for acc in accounts if acc['id'] == account_id), None)
         if not account:
             raise Exception("Account not found")
 
@@ -1523,7 +1437,8 @@ def admin_api_get_storage(account_id):
 def admin_api_clear_trash(account_id):
     """Empty trash for specific account"""
     try:
-        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        accounts = db.get_all_server_accounts(DB_SERVER_ID)
+        account = next((acc for acc in accounts if acc['id'] == account_id), None)
         if not account:
             return jsonify({"success": False, "error": "Account not found"}), 404
         
@@ -1541,7 +1456,8 @@ def admin_api_clear_trash(account_id):
 def admin_api_clear_mypack(account_id):
     """Delete all files in My Pack for a specific account"""
     try:
-        account = next((acc for acc in PIKPAK_ACCOUNTS if acc['id'] == account_id), None)
+        accounts = db.get_all_server_accounts(DB_SERVER_ID)
+        account = next((acc for acc in accounts if acc['id'] == account_id), None)
         if not account:
             return jsonify({"success": False, "error": "Account not found"}), 404
             
@@ -1576,7 +1492,8 @@ def admin_api_clear_all_trash():
     
     print(f"PIKPAK [{SERVER_ID}]: Clearing trash for ALL accounts", flush=True)
     
-    for account in PIKPAK_ACCOUNTS:
+    accounts = db.get_all_server_accounts(DB_SERVER_ID)
+    for account in accounts:
         try:
             tokens = ensure_logged_in(account)
             pikpak_empty_trash(account, tokens)
@@ -1586,7 +1503,7 @@ def admin_api_clear_all_trash():
             print(error_msg, flush=True)
             errors.append(error_msg)
     
-    log_activity("info", f"Cleared trash for {cleared_count}/{len(PIKPAK_ACCOUNTS)} accounts")
+    log_activity("info", f"Cleared trash for {cleared_count}/{len(accounts)} accounts")
     if errors:
         return jsonify({
             "success": False, 
@@ -1606,7 +1523,8 @@ def admin_api_clear_all_mypack():
 
     print(f"PIKPAK [{SERVER_ID}]: Clearing My Pack for ALL accounts", flush=True)
 
-    for account in PIKPAK_ACCOUNTS:
+    accounts = db.get_all_server_accounts(DB_SERVER_ID)
+    for account in accounts:
         try:
             tokens = ensure_logged_in(account)
             
@@ -1630,7 +1548,7 @@ def admin_api_clear_all_mypack():
             print(error_msg, flush=True)
             errors.append(error_msg)
             
-    log_activity("info", f"Cleared My Pack for {cleared_count}/{len(PIKPAK_ACCOUNTS)} accounts")
+    log_activity("info", f"Cleared My Pack for {cleared_count}/{len(accounts)} accounts")
     if errors:
         return jsonify({
             "success": False, 
@@ -1688,7 +1606,7 @@ def admin_test_magnet():
         
         available_account = "None available"
         try:
-            account = select_available_account()
+            account = get_best_account()
             available_account = account["id"]
         except:
             pass
@@ -1881,7 +1799,6 @@ def add_magnet():
     if not magnet:
         return jsonify({"error": "Missing magnet parameter"}), 400
     
-    exhausted_accounts = []
     max_total_retries = 8
     attempt = 0
     last_account_id = None
@@ -1902,7 +1819,10 @@ def add_magnet():
                 print(f"PIKPAK [{SERVER_ID}]: === ADD MAGNET ATTEMPT {attempt}/{max_total_retries} ===", flush=True)
 
                 # 1. Select account
-                account = select_available_account(exclude_accounts=exhausted_accounts)
+                account = get_best_account()
+                if not account:
+                    raise Exception("All PikPak accounts exhausted for today on this server")
+                
                 last_account_id = account["id"]
                 tokens = ensure_logged_in(account)
 
@@ -2016,7 +1936,7 @@ def add_magnet():
                         "server": SERVER_ID
                     }), 400
                 
-                increment_account_usage(account["id"])
+                db.increment_quota(account["id"])
                 
                 detected_quality = detect_quality(user_quality, magnet, file_size)
                 
@@ -2044,10 +1964,9 @@ def add_magnet():
                 return jsonify({"error": error_msg, "retry": False}), 503
             print(f"PIKPAK [{SERVER_ID}]: Error on attempt {attempt}: {error_msg}", flush=True)
             
-            if "task_daily_create_limit" in error_msg:
-                print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {account['id']} hit daily limit!", flush=True)
-                mark_account_exhausted(account["id"])
-                exhausted_accounts.append(account["id"])
+            if "captcha" in error_msg.lower():
+                print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {last_account_id} hit captcha!", flush=True)
+                db.rotate_device(last_account_id)
                 print(f"PIKPAK [{SERVER_ID}]: 🔄 Rotating to next account...", flush=True)
                 continue
             
@@ -2077,7 +1996,7 @@ def list_files():
         if not folder_id:
             return jsonify({"error": "Missing folder_id"}), 400
         
-        account = select_available_account()
+        account = get_best_account()
         tokens = ensure_logged_in(account)
         
         files = pikpak_list_files(folder_id, account, tokens)
@@ -2134,29 +2053,18 @@ def delete_folder():
 def pikpak_status():
     """Get PikPak accounts status"""
     try:
-        tokens_data = load_pikpak_tokens()
-        usage = tokens_data.get("daily_usage", {})
-        today = datetime.now().strftime("%Y-%m-%d")
-        
+        accounts = db.get_all_server_accounts(DB_SERVER_ID)
         accounts_status = []
         total_remaining = 0
         
-        for account in PIKPAK_ACCOUNTS:
-            account_key = f"account_{account['id']}"
-            account_usage = usage.get(account_key, {})
-            
-            if account_usage.get("date") != today:
-                downloads_today = 0
-            else:
-                downloads_today = account_usage.get("count", 0)
-            
-            remaining = 5 - downloads_today
+        for account in accounts:
+            remaining = 5 - account.get('quota_used', 5)
             total_remaining += remaining
             
             accounts_status.append({
                 "id": account["id"],
                 "email": account["email"],
-                "downloads_today": downloads_today,
+                "downloads_today": account.get('quota_used', 0),
                 "downloads_remaining": remaining,
                 "available": remaining > 0
             })
@@ -2165,7 +2073,7 @@ def pikpak_status():
             "server": SERVER_ID,
             "accounts": accounts_status,
             "total_remaining": total_remaining,
-            "total_accounts": len(PIKPAK_ACCOUNTS)
+            "total_accounts": len(accounts)
         })
         
     except Exception as e:
