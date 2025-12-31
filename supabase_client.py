@@ -16,12 +16,16 @@ class SupabaseDB:
         
         self.client: Client = create_client(url, key)
 
-    def get_best_account(self, target_server_id: int) -> Optional[Dict]:
+    def get_best_account(self, target_server_id: int, exclude_ids: list = None) -> Optional[Dict]:
         """
-        Fetches the best available account for the specific server (1 or 2).
-        Logic: Active status + Lowest quota used + Oldest last_used time.
+        Fetches best account, skipping specific IDs if provided.
         """
+        if exclude_ids is None:
+            exclude_ids = []
+            
         try:
+            # Fetch TOP 5 candidates (Active, Quota < 5, Server Match)
+            # Ordered by: Least Used -> Oldest Used
             response = self.client.table('accounts')\
                 .select('*')\
                 .eq('server_id', target_server_id)\
@@ -29,10 +33,18 @@ class SupabaseDB:
                 .lt('quota_used', 5)\
                 .order('quota_used', desc=False)\
                 .order('last_used_at', desc=False)\
-                .limit(1)\
+                .limit(5)\
                 .execute()
             
-            return response.data[0] if response.data else None
+            candidates = response.data or []
+            
+            # Python-side filtering (Pick first one NOT in exclude_ids)
+            for acc in candidates:
+                if acc['id'] not in exclude_ids:
+                    return acc
+            
+            return None
+            
         except Exception as e:
             print(f"❌ DB Error (get_best_account): {e}")
             return None
