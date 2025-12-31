@@ -380,19 +380,22 @@ def ensure_logged_in(account):
     
     return tokens
 
-def get_best_account():
-    """Select PikPak account with capacity"""
-    account = db.get_best_account(DB_SERVER_ID, exclude_ids=exhausted_accounts)
+def get_best_account(exclude_ids=None):
+    if exclude_ids is None: exclude_ids = []
+    print(f"PIKPAK [{SERVER_ID}]: Querying DB for best account (excluding {exclude_ids})...", flush=True)
+    
+    # Call DB client with exclusion
+    account = db.get_best_account(DB_SERVER_ID, exclude_ids=exclude_ids)
     
     if not account:
-        raise Exception("No available accounts found")
+        raise Exception("No available accounts found in Database!")
         
-    # MAP FIELDS HERE
+    # MAP FIELDS CORRECTLY
     return {
         "id": account['id'],
         "email": account['email'],
         "password": account['password'],
-        "device_id": account['current_device_id'],  # MAP THIS!
+        "device_id": account.get('current_device_id') or account.get('device_id'),
         "my_pack_id": account.get('my_pack_id')
     }
 
@@ -1845,6 +1848,7 @@ def add_magnet():
     max_total_retries = 8
     attempt = 0
     last_account_id = None
+    exhausted_accounts = []
     
     while attempt < max_total_retries:
         attempt += 1
@@ -1862,9 +1866,7 @@ def add_magnet():
                 print(f"PIKPAK [{SERVER_ID}]: === ADD MAGNET ATTEMPT {attempt}/{max_total_retries} ===", flush=True)
 
                 # 1. Select account
-                account = get_best_account()
-                if not account:
-                    raise Exception("All PikPak accounts exhausted for today on this server")
+                account = get_best_account(exclude_ids=exhausted_accounts)
                 
                 last_account_id = account["id"]
                 tokens = ensure_logged_in(account)
@@ -2010,6 +2012,7 @@ def add_magnet():
             if "captcha" in error_msg.lower():
                 print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {last_account_id} hit captcha!", flush=True)
                 db.rotate_device(last_account_id)
+                exhausted_accounts.append(last_account_id)
                 print(f"PIKPAK [{SERVER_ID}]: 🔄 Rotating to next account...", flush=True)
                 continue
             
