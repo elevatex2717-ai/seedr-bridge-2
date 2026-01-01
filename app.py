@@ -488,21 +488,25 @@ def pikpak_add_magnet(magnet_link, account, tokens):
         print(f"PIKPAK [{SERVER_ID}]: ❌ Add magnet failed: {data}", flush=True)
         raise Exception(f"Add magnet failed: {data.get('error', 'Unknown')}")
 
-def pikpak_poll_download(file_id, account, tokens, timeout=120):
-    """Poll until download completes"""
-    print(f"PIKPAK [{SERVER_ID}]: Polling download status for {file_id}", flush=True)
+def pikpak_poll_download(file_id, account, tokens, timeout=120, filename=None, file_hash=None):
+    """Poll until download completes, with recovery for 404s."""
+    print(f"PIKPAK [{SERVER_ID}]: Polling download status for {file_id} (hash: {file_hash})", flush=True)
     
     device_id = account["device_id"]
     user_id = tokens["user_id"]
-    access_token = tokens["access_token"]
     
     start_time = time.time()
     poll_interval = 5
-    
+    last_recovery_time = 0 # Start recovery check on first 404
+    RECOVERY_INTERVAL = 30 # seconds
+
     while time.time() - start_time < timeout:
         if EMERGENCY_STOP:
             raise Exception("Emergency stop activated during polling")
         try:
+            # We need fresh tokens inside the loop
+            access_token = ensure_logged_in(account)["access_token"]
+            
             captcha_sign, timestamp = generate_captcha_sign(device_id)
             captcha_token = get_pikpak_captcha(
                 action="GET:/drive/v1/files/{id}",
@@ -522,11 +526,65 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120):
             
             response = requests.get(url, headers=headers, timeout=30)
 
-            # Check for "file_not_found" error which can happen right after adding
             if response.status_code == 404 or "file_not_found" in response.text:
-                print(f"PIKPAK [{SERVER_ID}]: File not ready yet (404), waiting...", flush=True)
+                elapsed_time = time.time() - start_time
+                print(f"PIKPAK [{SERVER_ID}]: File not ready yet (404), waiting... ({int(elapsed_time)}s elapsed)", flush=True)
+
+                # Trigger recovery search every 30s
+                if time.time() - last_recovery_time > RECOVERY_INTERVAL:
+                    last_recovery_time = time.time()
+                    print(f"PIKPAK [{SERVER_ID}]: Triggering Recovery Search...", flush=True)
+                    
+                    try:
+                        # Use root folder if my_pack_id is not set
+                        parent_id = account.get("my_pack_id") or "root"
+                        files = pikpak_list_files(parent_id, account, tokens)
+                        
+                        found_match = False
+                        # PREFER HASH MATCH
+                        if file_hash:
+                            for file in files:
+                                try:
+                                    # Get full file info to check hash
+                                    info_tokens = ensure_logged_in(account)
+                                    file_info = pikpak_get_file_info(file.get('id'), account, info_tokens)
+                                    params_url = file_info.get('params', {}).get('url', '')
+                                    
+                                    if file_hash in params_url.upper():
+                                        print(f"PIKPAK [{SERVER_ID}]: Recovery: Found match by HASH: {file_hash}", flush=True)
+                                        new_file_id = file.get('id')
+                                        if new_file_id:
+                                            if file_info.get("phase") == "PHASE_TYPE_COMPLETE" or file_info.get("progress") == 100:
+                                                print(f"PIKPAK [{SERVER_ID}]: ✅ Download complete! (Found via recovery)", flush=True)
+                                                return True
+
+                                            print(f"PIKPAK [{SERVER_ID}]: Recovery: Switching to new file_id: {new_file_id}", flush=True)
+                                            file_id = new_file_id
+                                            found_match = True
+                                            break # Exit file loop
+                                except Exception as e:
+                                    print(f"PIKPAK [{SERVER_ID}]: Recovery: Error checking file info for hash: {e}", flush=True)
+
+                        # FALLBACK TO NAME MATCH if no hash match found
+                        if not found_match and filename:
+                            for file in files:
+                                if file.get('name') == filename:
+                                    print(f"PIKPAK [{SERVER_ID}]: Recovery: Found match by NAME: {filename}", flush=True)
+                                    new_file_id = file.get('id')
+                                    if new_file_id:
+                                        print(f"PIKPAK [{SERVER_ID}]: Recovery: Switching to new file_id: {new_file_id}", flush=True)
+                                        file_id = new_file_id
+                                        found_match = True
+                                        break # Exit file loop
+
+                        if found_match:
+                            continue # Restart polling loop with new file_id
+
+                    except Exception as e:
+                        print(f"PIKPAK [{SERVER_ID}]: Recovery Search failed: {e}", flush=True)
+
                 time.sleep(poll_interval)
-                continue
+                continue # Continue to next poll attempt
                 
             data = response.json()
             
@@ -539,12 +597,13 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120):
                 print(f"PIKPAK [{SERVER_ID}]: ✅ Download complete!", flush=True)
                 return True
 
-            # If not complete, log for debugging
-            print(f"DEBUG RESPONSE: {data}", flush=True)
-
             if phase == "PHASE_TYPE_ERROR":
                 raise Exception(f"Download failed: {data.get('message', 'Unknown error')}")
             
+            # If not complete and no useful info, log for debugging
+            if not phase and not progress:
+                print(f"DEBUG RESPONSE: {data}", flush=True)
+
             time.sleep(poll_interval)
             
         except Exception as e:
@@ -1933,7 +1992,6 @@ def add_magnet():
                 # 3. Proceed with normal download if not found...
                 task = pikpak_add_magnet(magnet, account, tokens)
                 folder_id = task.get("file_id")
-                file_name = task.get("file_name", "Unknown")
                 
                 if not folder_id or str(folder_id).strip() == "":
                     error_msg = "PikPak returned empty file_id - magnet may be invalid"
@@ -1947,7 +2005,18 @@ def add_magnet():
                         "server": SERVER_ID
                     }), 400
                 
-                pikpak_poll_download(folder_id, account, tokens, timeout=900)
+                # Prepare for robust polling
+                filename_from_magnet = get_magnet_name(magnet) or task.get("file_name", "Unknown")
+                hash_from_magnet = extract_hash(magnet)
+                
+                pikpak_poll_download(
+                    file_id=folder_id, 
+                    account=account, 
+                    tokens=tokens, 
+                    timeout=900,
+                    filename=filename_from_magnet,
+                    file_hash=hash_from_magnet
+                )
                 
                 tokens = ensure_logged_in(account)
                 
