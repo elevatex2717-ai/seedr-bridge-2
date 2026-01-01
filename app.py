@@ -1573,6 +1573,9 @@ def admin_api_clear_trash(account_id):
         tokens = ensure_logged_in(account)
         pikpak_empty_trash(account, tokens)
         
+        # NEW: Refresh storage data after clearing
+        get_account_storage(account_id)
+        
         log_activity("info", f"Cleared trash for account {account_id}")
         return jsonify({"success": True, "message": "Trash cleared"})
     except Exception as e:
@@ -1608,6 +1611,9 @@ def admin_api_clear_mypack(account_id):
         # 3. Empty trash
         pikpak_empty_trash(account, tokens)
         
+        # NEW: Refresh storage data after clearing
+        get_account_storage(account_id)
+        
         log_activity("info", f"Cleared My Pack for account {account_id} ({len(file_ids)} files)")
         return jsonify({"success": True, "message": "My Pack cleared", "files_deleted": len(file_ids)})
 
@@ -1631,6 +1637,10 @@ def admin_api_clear_all_trash():
                 account["device_id"] = account["current_device_id"]
             tokens = ensure_logged_in(account)
             pikpak_empty_trash(account, tokens)
+            
+            # NEW: Refresh storage for the account
+            get_account_storage(account['id'])
+            
             cleared_count += 1
         except Exception as e:
             error_msg = f"Account {account['id']} failed: {e}"
@@ -1676,6 +1686,9 @@ def admin_api_clear_all_mypack():
             # Batch delete and empty trash
             pikpak_batch_trash(file_ids, account, tokens)
             pikpak_empty_trash(account, tokens)
+            
+            # NEW: Refresh storage for the account
+            get_account_storage(account['id'])
             
             total_files_deleted += len(file_ids)
             cleared_count += 1
