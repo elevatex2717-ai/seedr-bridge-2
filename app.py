@@ -1573,7 +1573,15 @@ def admin_api_clear_trash(account_id):
         tokens = ensure_logged_in(account)
         pikpak_empty_trash(account, tokens)
         
-        # NEW: Refresh storage data after clearing
+        # Invalidate cache to force refresh
+        cache_key = f"storage_{account_id}"
+        with PIKPAK_LOCK:
+            if cache_key in PIKPAK_STORAGE_CACHE:
+                del PIKPAK_STORAGE_CACHE[cache_key]
+            if cache_key in PIKPAK_STORAGE_CACHE_TIME:
+                del PIKPAK_STORAGE_CACHE_TIME[cache_key]
+
+        # Now this will fetch fresh data
         get_account_storage(account_id)
         
         log_activity("info", f"Cleared trash for account {account_id}")
@@ -1611,7 +1619,15 @@ def admin_api_clear_mypack(account_id):
         # 3. Empty trash
         pikpak_empty_trash(account, tokens)
         
-        # NEW: Refresh storage data after clearing
+        # Invalidate cache to force refresh
+        cache_key = f"storage_{account_id}"
+        with PIKPAK_LOCK:
+            if cache_key in PIKPAK_STORAGE_CACHE:
+                del PIKPAK_STORAGE_CACHE[cache_key]
+            if cache_key in PIKPAK_STORAGE_CACHE_TIME:
+                del PIKPAK_STORAGE_CACHE_TIME[cache_key]
+
+        # Now this will fetch fresh data
         get_account_storage(account_id)
         
         log_activity("info", f"Cleared My Pack for account {account_id} ({len(file_ids)} files)")
@@ -1638,7 +1654,15 @@ def admin_api_clear_all_trash():
             tokens = ensure_logged_in(account)
             pikpak_empty_trash(account, tokens)
             
-            # NEW: Refresh storage for the account
+            # Invalidate cache to force refresh
+            cache_key = f"storage_{account['id']}"
+            with PIKPAK_LOCK:
+                if cache_key in PIKPAK_STORAGE_CACHE:
+                    del PIKPAK_STORAGE_CACHE[cache_key]
+                if cache_key in PIKPAK_STORAGE_CACHE_TIME:
+                    del PIKPAK_STORAGE_CACHE_TIME[cache_key]
+
+            # Now this will fetch fresh data
             get_account_storage(account['id'])
             
             cleared_count += 1
@@ -1687,7 +1711,15 @@ def admin_api_clear_all_mypack():
             pikpak_batch_trash(file_ids, account, tokens)
             pikpak_empty_trash(account, tokens)
             
-            # NEW: Refresh storage for the account
+            # Invalidate cache to force refresh
+            cache_key = f"storage_{account['id']}"
+            with PIKPAK_LOCK:
+                if cache_key in PIKPAK_STORAGE_CACHE:
+                    del PIKPAK_STORAGE_CACHE[cache_key]
+                if cache_key in PIKPAK_STORAGE_CACHE_TIME:
+                    del PIKPAK_STORAGE_CACHE_TIME[cache_key]
+
+            # Now this will fetch fresh data
             get_account_storage(account['id'])
             
             total_files_deleted += len(file_ids)
