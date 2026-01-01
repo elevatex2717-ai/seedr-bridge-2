@@ -2100,7 +2100,7 @@ def add_magnet():
                 detected_quality = detect_quality(user_quality, magnet, file_size)
                 
                 print(f"PIKPAK [{SERVER_ID}]: === ADD MAGNET SUCCESS ===", flush=True)
-                log_activity("success", f"Downloaded: {video_file.get('name', file_name)}")
+                log_activity("success", f"Downloaded: {video_file.get('name', filename_from_magnet)}")
                 update_daily_stats("downloads")
                 print(f"PIKPAK [{SERVER_ID}]: Quality detected: {detected_quality}", flush=True)
                 
@@ -2108,7 +2108,7 @@ def add_magnet():
                     "result": True,
                     "folder_id": folder_id,
                     "file_id": video_file.get("id", folder_id),
-                    "file_name": video_file.get("name", file_name),
+                    "file_name": video_file.get("name", filename_from_magnet),
                     "file_size": file_size,
                     "url": download_url,
                     "account_used": account["id"],
@@ -2133,7 +2133,7 @@ def add_magnet():
             if "All PikPak accounts exhausted" in error_msg:
                 return jsonify({"error": error_msg, "retry": False, "server": SERVER_ID}), 500
             
-            if attempt >= 3:
+            if attempt >= max_total_retries:
                 print(f"PIKPAK [{SERVER_ID}]: ❌ Max retries reached, stopping", flush=True)
                 return jsonify({
                     "error": error_msg,
