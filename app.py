@@ -1954,19 +1954,19 @@ def add_magnet():
     last_account_id = None
     exhausted_accounts = []
     
-    while attempt < max_total_retries:
-        attempt += 1
-        
-        if EMERGENCY_STOP:
-            print(f"🚨 [{SERVER_ID}] EMERGENCY STOP - Aborting magnet add", flush=True)
-            return jsonify({
-                "error": "Emergency stop activated",
-                "retry": False,
-                "server": SERVER_ID
-            }), 503
-        
-        try:
-            with MAGNET_ADD_LOCK:
+    with MAGNET_ADD_LOCK:
+        while attempt < max_total_retries:
+            attempt += 1
+            
+            if EMERGENCY_STOP:
+                print(f"🚨 [{SERVER_ID}] EMERGENCY STOP - Aborting magnet add", flush=True)
+                return jsonify({
+                    "error": "Emergency stop activated",
+                    "retry": False,
+                    "server": SERVER_ID
+                }), 503
+            
+            try:
                 print(f"PIKPAK [{SERVER_ID}]: === ADD MAGNET ATTEMPT {attempt}/{max_total_retries} ===", flush=True)
 
                 # 1. Select account
@@ -2117,34 +2117,39 @@ def add_magnet():
                     "server": SERVER_ID
                 })
             
-        except Exception as e:
-            error_msg = str(e)
-            if "Emergency stop" in error_msg:
-                return jsonify({"error": error_msg, "retry": False}), 503
-            print(f"PIKPAK [{SERVER_ID}]: Error on attempt {attempt}: {error_msg}", flush=True)
-            
-            if "captcha" in error_msg.lower():
-                print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {last_account_id} hit captcha!", flush=True)
-                db.rotate_device(last_account_id)
-                exhausted_accounts.append(last_account_id)
-                print(f"PIKPAK [{SERVER_ID}]: 🔄 Rotating to next account...", flush=True)
-                continue
-            
-            if "All PikPak accounts exhausted" in error_msg:
-                return jsonify({"error": error_msg, "retry": False, "server": SERVER_ID}), 500
-            
-            if attempt >= max_total_retries:
-                print(f"PIKPAK [{SERVER_ID}]: ❌ Max retries reached, stopping", flush=True)
-                return jsonify({
-                    "error": error_msg,
-                    "retry": False,
-                    "attempts": attempt,
-                    "account_used": last_account_id,
-                    "server": SERVER_ID
-                }), 500
-            
-            print(f"PIKPAK [{SERVER_ID}]: Retrying in 5 seconds...", flush=True)
-            time.sleep(5)
+            except Exception as e:
+                error_msg = str(e)
+                if "Emergency stop" in error_msg:
+                    return jsonify({"error": error_msg, "retry": False}), 503
+                print(f"PIKPAK [{SERVER_ID}]: Error on attempt {attempt}: {error_msg}", flush=True)
+                
+                if "captcha" in error_msg.lower():
+                    print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {last_account_id} hit captcha!", flush=True)
+                    db.rotate_device(last_account_id)
+                    exhausted_accounts.append(last_account_id)
+                    print(f"PIKPAK [{SERVER_ID}]: 🔄 Rotating to next account...", flush=True)
+                    continue
+                
+                if "task_daily_create_limit" in error_msg:
+                    print(f"PIKPAK [{SERVER_ID}]: ⚠️ Account {last_account_id} hit daily limit!", flush=True)
+                    exhausted_accounts.append(last_account_id)
+                    continue
+
+                if "All PikPak accounts exhausted" in error_msg:
+                    return jsonify({"error": error_msg, "retry": False, "server": SERVER_ID}), 500
+                
+                if attempt >= max_total_retries:
+                    print(f"PIKPAK [{SERVER_ID}]: ❌ Max retries reached, stopping", flush=True)
+                    return jsonify({
+                        "error": error_msg,
+                        "retry": False,
+                        "attempts": attempt,
+                        "account_used": last_account_id,
+                        "server": SERVER_ID
+                    }), 500
+                
+                print(f"PIKPAK [{SERVER_ID}]: Retrying in 5 seconds...", flush=True)
+                time.sleep(5)
     
     return jsonify({"error": "Max retries exceeded", "retry": False, "server": SERVER_ID}), 500
 
