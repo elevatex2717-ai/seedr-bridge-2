@@ -1607,8 +1607,13 @@ def admin_api_clear_mypack(account_id):
         print(f"PIKPAK [{SERVER_ID}]: Clearing My Pack for account {account_id}", flush=True)
         tokens = ensure_logged_in(account)
         
-        # 1. List all files in root
-        files_in_root = pikpak_list_files(parent_id='root', account=account, tokens=tokens)
+        # Determine correct folder to clear
+        target_folder_id = account.get("my_pack_id")
+        
+        print(f"PIKPAK [{SERVER_ID}]: Clearing folder {target_folder_id or 'ROOT'} for account {account_id}", flush=True)
+        
+        # List files in the correct folder
+        files_in_root = pikpak_list_files(parent_id=target_folder_id, account=account, tokens=tokens)
         file_ids = [f['id'] for f in files_in_root if 'id' in f]
         
         if not file_ids:
@@ -1700,8 +1705,13 @@ def admin_api_clear_all_mypack():
                 account["device_id"] = account["current_device_id"]
             tokens = ensure_logged_in(account)
             
-            # List files
-            files_in_root = pikpak_list_files(parent_id='root', account=account, tokens=tokens)
+            # Determine correct folder to clear
+            target_folder_id = account.get("my_pack_id")
+            
+            print(f"PIKPAK [{SERVER_ID}]: Clearing folder {target_folder_id or 'ROOT'} for account {account['id']}", flush=True)
+
+            # List files in the correct folder
+            files_in_root = pikpak_list_files(parent_id=target_folder_id, account=account, tokens=tokens)
             file_ids = [f['id'] for f in files_in_root if 'id' in f]
             
             if not file_ids:
