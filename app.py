@@ -521,6 +521,13 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120):
             }
             
             response = requests.get(url, headers=headers, timeout=30)
+
+            # Check for "file_not_found" error which can happen right after adding
+            if response.status_code == 404 or "file_not_found" in response.text:
+                print(f"PIKPAK [{SERVER_ID}]: File not ready yet (404), waiting...", flush=True)
+                time.sleep(poll_interval)
+                continue
+                
             data = response.json()
             
             phase = data.get("phase", "")
