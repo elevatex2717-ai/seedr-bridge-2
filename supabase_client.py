@@ -1,8 +1,8 @@
 import os
+from datetime import datetime, timezone
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from typing import Optional, Dict
-from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
@@ -50,7 +50,7 @@ class SupabaseDB:
             print(f"❌ DB Error (get_best_account): {e}")
             return None
 
-    def increment_quota(self, account_id: int):
+    def increment_quota(self, account_id: int) -> bool:
         """
         Call this AFTER a successful download to update quota usage.
         """
@@ -106,8 +106,7 @@ class SupabaseDB:
         try:
             self.client.table('accounts').update({
                 'quota_used': 0,
-                'last_used_at': datetime.now(timezone.utc).isoformat(),
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'last_used_at': datetime.now(timezone.utc).isoformat()
             }).eq('id', account_id).execute()
             return True
         except Exception as e:
