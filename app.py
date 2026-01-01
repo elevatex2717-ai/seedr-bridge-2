@@ -868,27 +868,11 @@ def pikpak_get_storage(account, tokens):
         total = int(data["quota"].get("limit", 1))
         if total == 0: total = 1
         
-        # ✅ NEW: Sync Storage to DB
+        # ✅ OPTIMIZED: Sync everything in one call
         try:
-            db.update_storage_stats(account_id, used, total)
+            db.sync_account_stats(account_id, real_usage, used, total)
         except Exception as e:
-            print(f"PIKPAK [{SERVER_ID}]: Failed to sync storage stats: {e}", flush=True)
-            
-        used_gb = round(used / (1024**3), 2)
-        total_gb = round(total / (1024**3), 2)
-        percent = round((used / total) * 100) if total > 0 else 0
-        
-        # Extract real download quota
-        cloud_quota = data.get("quotas", {}).get("cloud_download", {})
-        real_usage = int(cloud_quota.get("usage", 0))
-        real_limit = int(cloud_quota.get("limit", 5))
-
-        # Sync DB with Real Usage
-        try:
-            db.sync_quota(account_id, real_usage)
-            print(f"PIKPAK [{SERVER_ID}]: Synced quota for account {account_id}: {real_usage}/{real_limit}", flush=True)
-        except Exception as e:
-            print(f"PIKPAK [{SERVER_ID}]: Failed to sync quota: {e}", flush=True)
+            print(f"PIKPAK [{SERVER_ID}]: Failed to sync stats: {e}", flush=True)
             
         return {
             "used_gb": used_gb,

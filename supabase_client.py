@@ -145,5 +145,30 @@ class SupabaseDB:
         except Exception as e:
             print(f"❌ DB Error (update_storage_stats): {e}")
 
+    def sync_account_stats(self, account_id: int, download_usage: int, storage_used: int, storage_limit: int):
+        """
+        Syncs both download quota AND storage stats in one DB call.
+        """
+        try:
+            percent = 0.0
+            if storage_limit > 0:
+                percent = round((storage_used / storage_limit) * 100, 2)
+
+            self.client.table('accounts').update({
+                'quota_used': download_usage,
+                'storage_used_bytes': storage_used,
+                'storage_limit_bytes': storage_limit,
+                'storage_percent': percent,
+                'last_used_at': datetime.now(timezone.utc).isoformat(),
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }).eq('id', account_id).execute()
+            
+            print(f"✅ Synced ALL stats for Account {account_id}: Q={download_usage}, S={percent}%")
+            return True
+            
+        except Exception as e:
+            print(f"❌ DB Error (sync_account_stats): {e}")
+            return False
+
 # Singleton instance
 db = SupabaseDB()
