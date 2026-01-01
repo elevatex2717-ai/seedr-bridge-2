@@ -868,6 +868,12 @@ def pikpak_get_storage(account, tokens):
         total = int(data["quota"].get("limit", 1))
         if total == 0: total = 1
         
+        # ✅ NEW: Sync Storage to DB
+        try:
+            db.update_storage_stats(account_id, used, total)
+        except Exception as e:
+            print(f"PIKPAK [{SERVER_ID}]: Failed to sync storage stats: {e}", flush=True)
+            
         used_gb = round(used / (1024**3), 2)
         total_gb = round(total / (1024**3), 2)
         percent = round((used / total) * 100) if total > 0 else 0

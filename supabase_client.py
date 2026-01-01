@@ -123,5 +123,27 @@ class SupabaseDB:
         except Exception as e:
             print(f"❌ DB Error (sync_quota): {e}")
 
+    def update_storage_stats(self, account_id: int, used_bytes: int, limit_bytes: int):
+        """
+        Updates the disk space columns in Supabase.
+        """
+        try:
+            # Avoid division by zero
+            percent = 0.0
+            if limit_bytes > 0:
+                percent = round((used_bytes / limit_bytes) * 100, 2)
+
+            self.client.table('accounts').update({
+                'storage_used_bytes': used_bytes,
+                'storage_limit_bytes': limit_bytes,
+                'storage_percent': percent,
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }).eq('id', account_id).execute()
+            
+            print(f"📊 Storage Synced for Account {account_id}: {percent}% Full")
+            
+        except Exception as e:
+            print(f"❌ DB Error (update_storage_stats): {e}")
+
 # Singleton instance
 db = SupabaseDB()
