@@ -537,7 +537,7 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120, filename=None, f
                     
                     try:
                         # Use root folder if my_pack_id is not set
-                        parent_id = account.get("my_pack_id") or "root"
+                        parent_id = account.get("my_pack_id") or ""
                         files = pikpak_list_files(parent_id, account, tokens)
                         
                         found_match = False
