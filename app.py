@@ -561,9 +561,9 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120, filename=None, f
                                         if new_file_id:
                                             if file_info.get("phase") == "PHASE_TYPE_COMPLETE" or file_info.get("progress") == 100:
                                                 print(f"PIKPAK [{SERVER_ID}]: ✅ Download complete! (Found via recovery)", flush=True)
-                                                return True
+                                                return new_file_id
 
-                                            print(f"PIKPAK [{SERVER_ID}]: Recovery: Switching to new file_id: {new_file_id}", flush=True)
+                                            print(f"PIKPAK [{SERVER_ID}]: Recovery: Switching from old_id {file_id} to new_id: {new_file_id}", flush=True)
                                             file_id = new_file_id
                                             found_match = True
                                             break # Exit file loop
@@ -577,7 +577,7 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120, filename=None, f
                                     print(f"PIKPAK [{SERVER_ID}]: Recovery: Found match by NAME: {filename}", flush=True)
                                     new_file_id = file.get('id')
                                     if new_file_id:
-                                        print(f"PIKPAK [{SERVER_ID}]: Recovery: Switching to new file_id: {new_file_id}", flush=True)
+                                        print(f"PIKPAK [{SERVER_ID}]: Recovery: Switching from old_id {file_id} to new_id: {new_file_id}", flush=True)
                                         file_id = new_file_id
                                         found_match = True
                                         break # Exit file loop
@@ -600,7 +600,7 @@ def pikpak_poll_download(file_id, account, tokens, timeout=120, filename=None, f
             
             if phase == "PHASE_TYPE_COMPLETE" or data.get('progress') == 100:
                 print(f"PIKPAK [{SERVER_ID}]: ✅ Download complete!", flush=True)
-                return True
+                return file_id
 
             if phase == "PHASE_TYPE_ERROR":
                 raise Exception(f"Download failed: {data.get('message', 'Unknown error')}")
@@ -2101,7 +2101,8 @@ def add_magnet():
                 filename_from_magnet = get_magnet_name(magnet) or task.get("file_name", "Unknown")
                 hash_from_magnet = extract_hash(magnet)
                 
-                pikpak_poll_download(
+                # The poll function now returns the final, possibly recovered, file_id
+                final_file_id = pikpak_poll_download(
                     file_id=folder_id, 
                     account=account, 
                     tokens=tokens, 
@@ -2112,7 +2113,8 @@ def add_magnet():
                 
                 tokens = ensure_logged_in(account)
                 
-                file_info = pikpak_get_file_info(folder_id, account, tokens)
+                # Use the final_file_id from the poll for all subsequent operations
+                file_info = pikpak_get_file_info(final_file_id, account, tokens)
                 kind = file_info.get("kind", "")
                 
                 print(f"PIKPAK [{SERVER_ID}]: File kind: {kind}", flush=True)
@@ -2122,7 +2124,8 @@ def add_magnet():
                 
                 if kind == "drive#folder":
                     print(f"PIKPAK [{SERVER_ID}]: Detected FOLDER, listing contents...", flush=True)
-                    files = pikpak_list_files(folder_id, account, tokens)
+                    # Use final_file_id to list the correct folder
+                    files = pikpak_list_files(final_file_id, account, tokens)
                     
                     video_file = find_video_file(files)
                     if not video_file:
@@ -2158,7 +2161,8 @@ def add_magnet():
                     
                     if not download_url:
                         tokens = ensure_logged_in(account)
-                        download_url = pikpak_get_download_link(folder_id, account, tokens)
+                        # Use final_file_id to get the correct link
+                        download_url = pikpak_get_download_link(final_file_id, account, tokens)
                 
                 file_size = int(video_file.get("size", 0))
                 file_size_mb = file_size / 1024 / 1024
