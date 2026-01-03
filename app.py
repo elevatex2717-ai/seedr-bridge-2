@@ -49,6 +49,11 @@ HEADERS_STREAM = {
 
 EMERGENCY_STOP = False
 
+class EmergencyStopError(Exception):
+    """Custom exception for emergency stop."""
+    pass
+
+
 # Message collection storage
 MESSAGE_SESSIONS = {}
 SESSION_LOCK = threading.Lock()
@@ -1228,7 +1233,7 @@ async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=
 
     # Check emergency stop before starting
     if EMERGENCY_STOP:
-        raise Exception("Emergency stop activated - upload cancelled")
+        raise EmergencyStopError("Emergency stop activated - upload cancelled")
     
     if file_size_mb > 2048:
         raise Exception(f"File too large: {file_size_mb:.1f}MB (max 2048MB)")
@@ -1241,7 +1246,7 @@ async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=
     def progress_callback(current, total):
         # Check emergency stop during upload
         if EMERGENCY_STOP:
-            raise Exception("Emergency stop activated during upload")
+            raise EmergencyStopError("Emergency stop activated during upload")
         
         now = time.time()
         elapsed = now - last_log_time[0]
@@ -1321,7 +1326,11 @@ async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=
                         "avg_speed_mbps": avg_speed,
                         "server": SERVER_ID
                     }
-        
+
+        except EmergencyStopError as e:
+            print(f"WORKER [{SERVER_ID}]: Emergency stop caught in perform_upload. Aborting job.", flush=True)
+            raise e
+
         except FloodWait as e:
             print(f"WORKER [{SERVER_ID}]: FloodWait {e.value}s, waiting...", flush=True)
             await asyncio.sleep(e.value)
@@ -1332,6 +1341,10 @@ async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=
             error_msg = str(e)
             print(f"WORKER [{SERVER_ID}]: Error: {error_msg}", flush=True)
             
+            if "'NoneType' object has no attribute 'write'" in error_msg:
+                print(f"WORKER [{SERVER_ID}]: Probable emergency stop race condition. Aborting.", flush=True)
+                raise EmergencyStopError("Aborting due to likely emergency stop.")
+
             if retry_count >= max_retries:
                 raise Exception(f"Upload failed after {max_retries} retries: {error_msg}")
             
@@ -1416,10 +1429,17 @@ def worker_loop():
             log_activity("success", f"Uploaded: {data.get('filename', 'video.mp4')}")
             update_daily_stats("uploads")
             update_daily_stats("total_bytes", result.get('file_size', 0))
-            update_daily_stats("total_time", result.get('upload_time', 0))
+                    except EmergencyStopError as e:
+                        error_msg = "cancelled by emergency stop"
+                        print(f"WORKER [{SERVER_ID}]: Job {job_id} {error_msg}", flush=True)
+                        if job_id:
+                            JOBS[job_id]['status'] = 'failed'
+                            log_activity("failed", f"Upload cancelled by emergency stop: {data.get('filename', 'N/A')}")
+                            update_daily_stats("failed")
+                            JOBS[job_id]['error'] = error_msg
+                            JOBS[job_id]['failed'] = time.time()
             
-        except Exception as e:
-            error_msg = str(e)
+                    except Exception as e:            error_msg = str(e)
             print(f"WORKER [{SERVER_ID}] ERROR: {error_msg}", flush=True)
             
             if "failed after" in error_msg or "too large" in error_msg:
