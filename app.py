@@ -1429,17 +1429,20 @@ def worker_loop():
             log_activity("success", f"Uploaded: {data.get('filename', 'video.mp4')}")
             update_daily_stats("uploads")
             update_daily_stats("total_bytes", result.get('file_size', 0))
-                    except EmergencyStopError as e:
-                        error_msg = "cancelled by emergency stop"
-                        print(f"WORKER [{SERVER_ID}]: Job {job_id} {error_msg}", flush=True)
-                        if job_id:
-                            JOBS[job_id]['status'] = 'failed'
-                            log_activity("failed", f"Upload cancelled by emergency stop: {data.get('filename', 'N/A')}")
-                            update_daily_stats("failed")
-                            JOBS[job_id]['error'] = error_msg
-                            JOBS[job_id]['failed'] = time.time()
+            update_daily_stats("total_time", result.get('upload_time', 0))
+
+        except EmergencyStopError as e:
+            error_msg = "cancelled by emergency stop"
+            print(f"WORKER [{SERVER_ID}]: Job {job_id} {error_msg}", flush=True)
+            if job_id:
+                JOBS[job_id]['status'] = 'failed'
+                log_activity("failed", f"Upload cancelled by emergency stop: {data.get('filename', 'N/A')}")
+                update_daily_stats("failed")
+                JOBS[job_id]['error'] = error_msg
+                JOBS[job_id]['failed'] = time.time()
             
-                    except Exception as e:            error_msg = str(e)
+        except Exception as e:
+            error_msg = str(e)
             print(f"WORKER [{SERVER_ID}] ERROR: {error_msg}", flush=True)
             
             if "failed after" in error_msg or "too large" in error_msg:
