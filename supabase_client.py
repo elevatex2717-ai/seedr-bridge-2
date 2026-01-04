@@ -220,5 +220,54 @@ class SupabaseDB:
             print(f"❌ DB Error (get_active_gofile_uploads): {e}")
             return []
 
+    def update_gofile_keep_alive(self, file_id: str, status: str = None, server: str = None) -> bool:
+        """
+        Update Gofile record: timestamp always updated, status/server optional.
+        
+        Args:
+            file_id: Gofile content ID
+            status: Optional - 'active', 'expired', 'deleted'
+            server: Optional - new server if migrated
+        """
+        try:
+            update_data = {
+                'last_keep_alive': datetime.now(timezone.utc).isoformat()
+            }
+            
+            if status is not None:
+                update_data['status'] = status
+            
+            if server is not None:
+                update_data['server'] = server
+            
+            self.client.table('gofile_uploads')\
+                .update(update_data)\
+                .eq('file_id', file_id)\
+                .execute()
+            
+            print(f"🔄 Gofile updated: {file_id}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ DB Error (update_gofile_keep_alive): {e}")
+            return False
+
+    def get_gofile_by_file_id(self, file_id: str) -> Optional[Dict]:
+        """
+        Get single Gofile record by file_id.
+        """
+        try:
+            response = self.client.table('gofile_uploads')\
+                .select('*')\
+                .eq('file_id', file_id)\
+                .limit(1)\
+                .execute()
+            
+            return response.data[0] if response.data else None
+            
+        except Exception as e:
+            print(f"❌ DB Error (get_gofile_by_file_id): {e}")
+            return None
+
 # Singleton instance
 db = SupabaseDB()
