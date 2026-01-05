@@ -2015,15 +2015,20 @@ def emergency_status():
 # PIKPAK ADD MAGNET ROUTE
 # ============================================================
 
-@app.route('/add-magnet', methods=['POST'])
+@app.route('/add-magnet', methods=['GET', 'POST'])
 def add_magnet():
     """Add magnet to PikPak and return download link"""
+    if request.method == 'GET':
+        return jsonify({"status": "online", "message": "This endpoint expects a POST request with a magnet link."})
+
     global EMERGENCY_STOP
     # Add random delay to prevent simultaneous requests
     import random
     time.sleep(random.uniform(1, 3))
-    magnet = request.json.get('magnet')
-    user_quality = request.json.get('quality', 'auto')
+    
+    data = request.get_json(silent=True) or {}
+    magnet = data.get('magnet')
+    user_quality = data.get('quality', 'auto')
     
     if not magnet:
         return jsonify({"error": "Missing magnet parameter"}), 400
