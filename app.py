@@ -16,6 +16,7 @@ from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from urllib.parse import unquote
 from supabase_client import db
+from smart_cache import check_smart_cache, save_to_smart_cache
 
 app = Flask(__name__)
 
@@ -2033,6 +2034,43 @@ def add_magnet():
     if not magnet:
         return jsonify({"error": "Missing magnet parameter"}), 400
     
+    # Smart Cache Check (Deduplication)
+    try:
+        cached = check_smart_cache(magnet)
+        if cached:
+            print(f"PIKPAK [{SERVER_ID}]: ✅ Smart Cache HIT: {cached.get('file_name')}", flush=True)
+            
+            # Get account details
+            account_id = cached['account_id']
+            acc_resp = db.client.table('accounts').select('*').eq('id', account_id).execute()
+            
+            if acc_resp.data:
+                cached_account = acc_resp.data[0]
+                # Ensure device_id
+                cached_account['device_id'] = cached_account.get('current_device_id') or cached_account.get('device_id')
+                
+                if cached_account['device_id']:
+                    tokens = ensure_logged_in(cached_account)
+                    file_id = cached['file_id']
+                    download_url = pikpak_get_download_link(file_id, cached_account, tokens)
+                    file_size = cached.get('file_size', 0)
+                    
+                    return jsonify({
+                        "result": True,
+                        "folder_id": file_id,
+                        "file_id": file_id,
+                        "file_name": cached.get('file_name'),
+                        "file_size": file_size,
+                        "url": download_url,
+                        "account_used": account_id,
+                        "file_type": "file",
+                        "quality_detected": detect_quality(user_quality, magnet, file_size),
+                        "server": SERVER_ID,
+                        "cached": True
+                    })
+    except Exception as e:
+        print(f"PIKPAK [{SERVER_ID}]: ⚠️ Smart Cache Error: {e}", flush=True)
+
     max_total_retries = 8
     attempt = 0
     last_account_id = None
@@ -2186,6 +2224,20 @@ def add_magnet():
                 db.increment_quota(account["id"])
                 
                 detected_quality = detect_quality(user_quality, magnet, file_size)
+                
+                # Save to Smart Cache
+                try:
+                    save_to_smart_cache(
+                        file_id=video_file.get("id", folder_id),
+                        account_id=account["id"],
+                        magnet_link=magnet,
+                        file_name=video_file.get("name", filename_from_magnet),
+                        file_size=file_size,
+                        file_hash=video_file.get("hash") or video_file.get("md5"),
+                        parent_id=video_file.get("parent_id")
+                    )
+                except Exception as e:
+                    print(f"PIKPAK [{SERVER_ID}]: ⚠️ Failed to save to Smart Cache: {e}", flush=True)
                 
                 print(f"PIKPAK [{SERVER_ID}]: === ADD MAGNET SUCCESS ===", flush=True)
                 log_activity("success", f"Downloaded: {video_file.get('name', filename_from_magnet)}")
