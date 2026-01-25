@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from io import IOBase
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from pyrogram import Client, enums
-from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired
+from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired, MessageNotModified
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from urllib.parse import unquote
 from supabase_client import db
@@ -39,6 +39,8 @@ API_ID = os.environ.get("TG_API_ID")
 API_HASH = os.environ.get("TG_API_HASH")
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "7197806663")
+INDEX_CHANNEL_ID = os.environ.get("INDEX_CHANNEL_ID")
+STORAGE_CHANNEL_ID = os.environ.get("STORAGE_CHANNEL_ID")
 
 if API_ID:
     try:
@@ -2418,6 +2420,119 @@ def pikpak_status():
         
     except Exception as e:
         return jsonify({"error": str(e), "server": SERVER_ID}), 500
+
+# ============================================================
+# INDEX UPDATE ROUTE
+# ============================================================
+
+@app.route('/update-index', methods=['POST'])
+def update_index():
+    """Update Movie Index with new entry"""
+    try:
+        data = request.json
+        movie_name = data.get('movie_name', '').strip()
+        poster_link = data.get('poster_link', '').strip()
+        year = data.get('year', '').strip()
+        
+        if not movie_name or not poster_link:
+            return jsonify({"error": "Missing movie_name or poster_link"}), 400
+            
+        # 1. Determine Group & Fetch DB
+        first_letter = movie_name[0] if movie_name else '0'
+        group_data = db.get_index_group(first_letter)
+        
+        # Auto-init if missing
+        if not group_data:
+            print(f"INDEX [{SERVER_ID}]: Group missing for '{first_letter}', initializing...", flush=True)
+            db.initialize_index_rows()
+            group_data = db.get_index_group(first_letter)
+            
+        if not group_data:
+            return jsonify({"error": "Could not find or create index group"}), 500
+            
+        group_name = group_data['letter_group']
+        content_text = group_data.get('content_text', '') or ''
+        
+        # 2. Parse Content & Add New Entry
+        lines = [line.strip() for line in content_text.split('\n') if line.strip()]
+        
+        display_name = f"{movie_name} ({year})" if year else movie_name
+        new_entry = f"• [{display_name}]({poster_link})"
+        
+        if new_entry in lines:
+            return jsonify({"message": "Entry already exists", "server": SERVER_ID})
+            
+        lines.append(new_entry)
+        
+        # 3. Sort (Alphabetical)
+        lines.sort(key=lambda x: x.lower())
+        new_content = "\n".join(lines)
+        
+        # 4. Update Telegram
+        storage_msg_id = group_data.get('storage_msg_id')
+        main_msg_id = group_data.get('main_msg_id')
+        
+        async def edit_telegram():
+            async with Client(
+                SESSION_NAME,
+                api_id=API_ID,
+                api_hash=API_HASH,
+                bot_token=BOT_TOKEN,
+                workdir="/tmp"
+            ) as tg_app:
+                # Edit Storage Channel
+                if storage_msg_id and STORAGE_CHANNEL_ID:
+                    try:
+                        await tg_app.edit_message_text(
+                            chat_id=int(STORAGE_CHANNEL_ID),
+                            message_id=int(storage_msg_id),
+                            text=new_content,
+                            disable_web_page_preview=True,
+                            parse_mode=enums.ParseMode.MARKDOWN
+                        )
+                    except MessageNotModified:
+                        pass
+                    except Exception as e:
+                        print(f"INDEX [{SERVER_ID}]: Storage edit failed: {e}", flush=True)
+
+                # Edit Main Channel
+                if main_msg_id and INDEX_CHANNEL_ID:
+                    try:
+                        await tg_app.edit_message_text(
+                            chat_id=int(INDEX_CHANNEL_ID),
+                            message_id=int(main_msg_id),
+                            text=new_content,
+                            disable_web_page_preview=True,
+                            parse_mode=enums.ParseMode.MARKDOWN
+                        )
+                    except MessageNotModified:
+                        pass
+                    except Exception as e:
+                        print(f"INDEX [{SERVER_ID}]: Main edit failed: {e}", flush=True)
+
+        # Run async logic in new loop for this thread
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(edit_telegram())
+            loop.close()
+        except Exception as e:
+            print(f"INDEX [{SERVER_ID}]: Async execution failed: {e}", flush=True)
+
+        # 5. Save DB
+        if db.update_index_content(group_name, new_content):
+            return jsonify({
+                "success": True, 
+                "group": group_name, 
+                "entry": new_entry,
+                "server": SERVER_ID
+            })
+        else:
+            return jsonify({"error": "Database update failed"}), 500
+
+    except Exception as e:
+        print(f"INDEX [{SERVER_ID}]: Error: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================
 # UPLOAD & JOB ROUTES
