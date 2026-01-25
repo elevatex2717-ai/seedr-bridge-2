@@ -488,5 +488,217 @@ class SupabaseDB:
             print(f"❌ DB Error (clear_trash_from_cache): {e}")
             return 0
 
+    # ============================================
+    # INDEX MESSAGES METHODS (Dual Channel Tracker)
+    # ============================================
+
+    def _map_letter_to_group(self, letter: str) -> str:
+        """
+        Maps a single character to its letter group.
+        
+        Args:
+            letter: First character of movie name
+            
+        Returns:
+            Group name (A-E, F-J, K-O, P-T, U-Z, 0-9)
+        """
+        if not letter:
+            return '0-9'
+        
+        char = letter[0].upper()
+        
+        if char in 'ABCDE':
+            return 'A-E'
+        elif char in 'FGHIJ':
+            return 'F-J'
+        elif char in 'KLMNO':
+            return 'K-O'
+        elif char in 'PQRST':
+            return 'P-T'
+        elif char in 'UVWXYZ':
+            return 'U-Z'
+        else:
+            # Numbers, symbols, special characters
+            return '0-9'
+
+    def get_index_group(self, letter: str) -> Optional[Dict]:
+        """
+        Get index group row by first letter of movie name.
+        
+        Args:
+            letter: First character of movie name (e.g., 'A', 'T', '2')
+            
+        Returns:
+            Dict with letter_group, storage_msg_id, main_msg_id, content_text
+            None if not found
+        """
+        try:
+            group_name = self._map_letter_to_group(letter)
+            
+            response = self.client.table('index_messages')\
+                .select('*')\
+                .eq('letter_group', group_name)\
+                .limit(1)\
+                .execute()
+            
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            
+            return None
+            
+        except Exception as e:
+            print(f"❌ DB Error (get_index_group): {e}")
+            return None
+
+    def get_all_index_groups(self) -> List[Dict]:
+        """
+        Get all index group rows.
+        Useful for displaying all groups or bulk operations.
+        
+        Returns:
+            List of all index group dicts
+        """
+        try:
+            response = self.client.table('index_messages')\
+                .select('*')\
+                .order('id', desc=False)\
+                .execute()
+            
+            return response.data or []
+            
+        except Exception as e:
+            print(f"❌ DB Error (get_all_index_groups): {e}")
+            return []
+
+    def update_index_content(self, group: str, new_content: str) -> bool:
+        """
+        Update the content_text for an index group.
+        
+        Args:
+            group: Group name (A-E, F-J, K-O, P-T, U-Z, 0-9)
+            new_content: New markdown content string
+            
+        Returns:
+            True if updated, False if error
+        """
+        try:
+            self.client.table('index_messages')\
+                .update({
+                    'content_text': new_content,
+                    'updated_at': datetime.now(timezone.utc).isoformat()
+                })\
+                .eq('letter_group', group)\
+                .execute()
+            
+            print(f"✅ Index updated: {group}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ DB Error (update_index_content): {e}")
+            return False
+
+    def set_index_message_ids(self, group: str, storage_msg_id: int = None, main_msg_id: int = None) -> bool:
+        """
+        Set the Telegram message IDs for an index group.
+        Call this during initial setup after creating placeholder messages.
+        
+        Args:
+            group: Group name (A-E, F-J, K-O, P-T, U-Z, 0-9)
+            storage_msg_id: Message ID in Storage Channel
+            main_msg_id: Message ID in Main/Index Channel
+            
+        Returns:
+            True if updated, False if error
+        """
+        try:
+            update_data = {
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            if storage_msg_id is not None:
+                update_data['storage_msg_id'] = storage_msg_id
+            
+            if main_msg_id is not None:
+                update_data['main_msg_id'] = main_msg_id
+            
+            self.client.table('index_messages')\
+                .update(update_data)\
+                .eq('letter_group', group)\
+                .execute()
+            
+            print(f"✅ Message IDs set for {group}: storage={storage_msg_id}, main={main_msg_id}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ DB Error (set_index_message_ids): {e}")
+            return False
+
+    def append_to_index(self, movie_name: str, link: str) -> bool:
+        """
+        Append a new movie entry to the appropriate index group.
+        Automatically determines group from movie name.
+        
+        Args:
+            movie_name: Name of the movie
+            link: Telegram link to the movie post
+            
+        Returns:
+            True if appended, False if error
+        """
+        try:
+            # Get first letter and find group
+            first_letter = movie_name[0] if movie_name else '0'
+            group_data = self.get_index_group(first_letter)
+            
+            if not group_data:
+                print(f"❌ Could not find group for: {movie_name}")
+                return False
+            
+            group_name = group_data['letter_group']
+            current_content = group_data.get('content_text', '') or ''
+            
+            # Create new entry in markdown format
+            new_entry = f"• [{movie_name}]({link})"
+            
+            # Append to existing content
+            if current_content.strip():
+                updated_content = f"{current_content}\n{new_entry}"
+            else:
+                updated_content = new_entry
+            
+            # Update in database
+            return self.update_index_content(group_name, updated_content)
+            
+        except Exception as e:
+            print(f"❌ DB Error (append_to_index): {e}")
+            return False
+
+    def initialize_index_rows(self) -> bool:
+        """
+        Initialize the 6 default index groups if they don't exist.
+        Safe to call multiple times (uses upsert).
+        
+        Returns:
+            True if successful, False if error
+        """
+        try:
+            groups = ['A-E', 'F-J', 'K-O', 'P-T', 'U-Z', '0-9']
+            
+            for group in groups:
+                self.client.table('index_messages')\
+                    .upsert({
+                        'letter_group': group,
+                        'content_text': '',
+                        'updated_at': datetime.now(timezone.utc).isoformat()
+                    }, on_conflict='letter_group')\
+                    .execute()
+            
+            print(f"✅ Initialized {len(groups)} index groups")
+            return True
+            
+        except Exception as e:
+            print(f"❌ DB Error (initialize_index_rows): {e}")
+            return False
+
 # Singleton instance
 db = SupabaseDB()
