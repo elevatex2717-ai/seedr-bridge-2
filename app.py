@@ -17,6 +17,9 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from urllib.parse import unquote
 from supabase_client import db
 from smart_cache import check_smart_cache, save_to_smart_cache
+from http.client import IncompleteRead as HttpIncompleteRead
+from urllib3.exceptions import IncompleteRead as Urllib3IncompleteRead, ProtocolError
+from requests.exceptions import ChunkedEncodingError, ConnectionError as RequestsConnectionError
 
 app = Flask(__name__)
 
@@ -1229,7 +1232,7 @@ def detect_quality_from_size(size_bytes):
 # ASYNC UPLOAD LOGIC (MODIFIED - Uses SESSION_NAME)
 # ============================================================
 
-async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=0):
+async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=0, file_id=None, account_id=None):
     """Upload video with optimized speed"""
 
     # Check emergency stop before starting
@@ -1328,6 +1331,33 @@ async def perform_upload(file_url, chat_target, caption, filename, file_size_mb=
                         "server": SERVER_ID
                     }
 
+        except (HttpIncompleteRead, Urllib3IncompleteRead, ProtocolError, ChunkedEncodingError, RequestsConnectionError) as e:
+            print(f"WORKER [{SERVER_ID}]: Network error during upload: {e}", flush=True)
+            
+            # Refresh link if possible (Fix for Stale/Cache Links)
+            if file_id and account_id:
+                print(f"WORKER [{SERVER_ID}]: 🔄 Refreshing download link...", flush=True)
+                try:
+                    # Get account
+                    accounts = db.get_all_server_accounts(DB_SERVER_ID)
+                    account = next((a for a in accounts if a['id'] == int(account_id)), None)
+                    
+                    if account:
+                        if "current_device_id" in account:
+                            account["device_id"] = account["current_device_id"]
+                        
+                        tokens = ensure_logged_in(account)
+                        new_url = pikpak_get_download_link(file_id, account, tokens)
+                        if new_url:
+                            file_url = new_url
+                            print(f"WORKER [{SERVER_ID}]: ✅ Link refreshed successfully!", flush=True)
+                except Exception as refresh_e:
+                    print(f"WORKER [{SERVER_ID}]: ⚠️ Failed to refresh link: {refresh_e}", flush=True)
+            
+            retry_count += 1
+            await asyncio.sleep(2)
+            continue
+
         except EmergencyStopError as e:
             print(f"WORKER [{SERVER_ID}]: Emergency stop caught in perform_upload. Aborting job.", flush=True)
             raise e
@@ -1419,7 +1449,9 @@ def worker_loop():
                 chat_target=data['chat_id'],
                 caption=data.get('caption', ''),
                 filename=data.get('filename', 'video.mp4'),
-                file_size_mb=file_size_mb
+                file_size_mb=file_size_mb,
+                file_id=data.get('file_id'),
+                account_id=data.get('account_used') or data.get('account_id')
             ))
             
             JOBS[job_id]['status'] = 'done'
