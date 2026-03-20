@@ -2613,6 +2613,50 @@ def cleanup_sessions():
 cleanup_thread = threading.Thread(target=cleanup_sessions, daemon=True)
 cleanup_thread.start()
 
+# ── SANJAY AI AGENT RELAY ─────────────────────────────────────
+# Completely separate from the movie bot — uses different env vars
+AGENT_BOT_TOKEN = os.environ.get("AGENT_BOT_TOKEN", "")
+AGENT_SECRET_KEY = os.environ.get("AGENT_SECRET_KEY", "")
+
+@app.route("/relay", methods=["POST"])
+def relay_to_telegram():
+    secret = request.headers.get("X-Agent-Secret", "")
+    if not AGENT_SECRET_KEY or secret != AGENT_SECRET_KEY:
+        return {"error": "unauthorized"}, 401
+    
+    if not AGENT_BOT_TOKEN:
+        return {"error": "AGENT_BOT_TOKEN not set"}, 500
+    
+    data = request.get_json()
+    if not data:
+        return {"error": "no json body"}, 400
+    
+    chat_id = data.get("chat_id")
+    message = str(data.get("message", ""))
+    
+    if not chat_id or not message:
+        return {"error": "missing chat_id or message"}, 400
+    
+    chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+    
+    for chunk in chunks:
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{AGENT_BOT_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": chunk},
+                timeout=30
+            )
+        except Exception as e:
+            print(f"[RELAY] Failed to send chunk: {e}")
+    
+    return {"status": "sent"}
+
+@app.route("/relay/health", methods=["GET"])
+def relay_health():
+    return {"status": "relay ok"}
+
+# ── END OF AGENT RELAY ────────────────────────────────────────
+
 # ============================================================
 # MAIN
 # ============================================================
